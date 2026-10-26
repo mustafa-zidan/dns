@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't resolve, block or run the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: For example a `dig` command and its output.
+      render: shell
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: The relevant parts of your dns.toml. Remove API tokens.
+      render: toml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Run with `DNS_LOG=dns=debug` if you can. Remove anything private.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag or commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Docker image
+        - Built from source
+    validations:
+      required: true

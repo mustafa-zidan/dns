@@ -5,6 +5,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-mustafa--zidan%2Fdns-blue?logo=docker&logoColor=white)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
 [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![DoT / DoH](https://img.shields.io/badge/upstreams-DoT%20%7C%20DoH-success)](#features)
 
 A DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
@@ -69,3 +70,16 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --test live -- --ignored   # queries real public resolvers
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
