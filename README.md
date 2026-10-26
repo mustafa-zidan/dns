@@ -55,9 +55,32 @@ Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` envir
 
 Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), for example `DNS_LOG=dns=debug` to see each blocked name and cache hit.
 
+## HTTP API
+
+The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/health` | Liveness check |
+| GET | `/api/stats?top=10` | Query counts (blocked, cached, forwarded, failed), blocked ratio, top queried and top blocked domains |
+| DELETE | `/api/stats` | Reset the counters |
+| GET | `/api/blocking` | Whether blocking is active, rule counts, last reload and per-list status |
+| PUT | `/api/blocking` | `{"enabled": false}` turns blocking off, `{"enabled": false, "pause_secs": 300}` pauses it for 5 minutes, `{"enabled": true}` turns it back on |
+| POST | `/api/blocking/reload` | Re-download the blocklists now |
+| GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule |
+| GET | `/api/cache` | Number of cached answers |
+| DELETE | `/api/cache` | Empty the cache |
+
+```sh
+curl -s localhost:8053/api/stats | jq
+curl -s -X PUT localhost:8053/api/blocking -H 'content-type: application/json' \
+  -d '{"enabled": false, "pause_secs": 300}'
+```
+
+Stats live in memory only and reset on restart. Set `stats.top_domains = false` to keep no per-domain counts at all.
+
 ## Roadmap
 
-- HTTP API with query statistics, top blocked domains and a blocking toggle.
 - Web dashboard.
 - Serving DoH/DoT to clients.
 - Per-client rules.

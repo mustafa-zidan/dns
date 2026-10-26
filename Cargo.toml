@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 anyhow = "1.0.104"
 arc-swap = "1.9.3"
+axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 hickory-proto = "0.26.3"
 moka = { version = "0.12.16", features = ["future"] }
@@ -26,3 +27,5 @@ url = "2.5.8"
 
 [dev-dependencies]
 rcgen = "0.14.10"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+serde_json = "1.0.154"

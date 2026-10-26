@@ -14,6 +14,8 @@ pub struct Config {
     pub upstream: UpstreamConfig,
     pub cache: CacheConfig,
     pub blocking: BlockingConfig,
+    pub api: ApiConfig,
+    pub stats: StatsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,6 +138,45 @@ impl Default for BlockingConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApiConfig {
+    pub enabled: bool,
+    /// Where the HTTP API listens. Keep it on loopback unless `token` is set.
+    pub listen: SocketAddr,
+    /// When set, every API request must send `Authorization: Bearer <token>`.
+    pub token: Option<String>,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listen: "127.0.0.1:8053".parse().unwrap(),
+            token: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StatsConfig {
+    /// Count queries per domain for the "top domains" lists. Kept in memory
+    /// only; turn it off to keep no record of which names were looked up.
+    pub top_domains: bool,
+    /// Distinct domains tracked per list before new ones are ignored.
+    pub max_tracked_domains: usize,
+}
+
+impl Default for StatsConfig {
+    fn default() -> Self {
+        Self {
+            top_domains: true,
+            max_tracked_domains: 10_000,
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
@@ -149,6 +190,10 @@ impl Config {
         anyhow::ensure!(
             !config.upstream.servers.is_empty(),
             "upstream.servers is empty"
+        );
+        anyhow::ensure!(
+            config.api.token.as_deref() != Some(""),
+            "api.token is empty; remove it or set a value"
         );
         Ok(config)
     }

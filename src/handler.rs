@@ -8,6 +8,7 @@ use tracing::{debug, warn};
 use crate::blocklist::{Blocklist, Verdict};
 use crate::cache::{Cache, CacheKey};
 use crate::config::{BlockMode, BlockingConfig};
+use crate::stats::{Outcome, Stats};
 use crate::upstream::Upstreams;
 
 /// EDNS payload size we advertise, per the DNS Flag Day 2020 recommendation.
@@ -18,16 +19,18 @@ pub struct Handler {
     blocklist: Arc<Blocklist>,
     block_mode: BlockMode,
     blocked_ttl: u32,
-    cache: Cache,
+    cache: Arc<Cache>,
     upstreams: Upstreams,
+    stats: Arc<Stats>,
 }
 
 impl Handler {
     pub fn new(
         blocklist: Arc<Blocklist>,
         blocking: &BlockingConfig,
-        cache: Cache,
+        cache: Arc<Cache>,
         upstreams: Upstreams,
+        stats: Arc<Stats>,
     ) -> Self {
         Self {
             blocklist,
@@ -35,6 +38,7 @@ impl Handler {
             blocked_ttl: blocking.blocked_ttl,
             cache,
             upstreams,
+            stats,
         }
     }
 
@@ -45,6 +49,7 @@ impl Handler {
             Ok(request) => Some(self.handle(&request).await),
             Err(e) => {
                 debug!(error = %e, "malformed query");
+                self.stats.record(None, Outcome::Invalid);
                 let id = u16::from_be_bytes([*bytes.first()?, *bytes.get(1)?]);
                 Some(Message::error_msg(id, OpCode::Query, ResponseCode::FormErr))
             }
@@ -52,14 +57,18 @@ impl Handler {
     }
 
     pub async fn handle(&self, request: &Message) -> Message {
+        let invalid = |code| {
+            self.stats.record(None, Outcome::Invalid);
+            error_response(request, code)
+        };
         if request.message_type != MessageType::Query {
-            return error_response(request, ResponseCode::FormErr);
+            return invalid(ResponseCode::FormErr);
         }
         if request.op_code != OpCode::Query {
-            return error_response(request, ResponseCode::NotImp);
+            return invalid(ResponseCode::NotImp);
         }
         let [query] = request.queries.as_slice() else {
-            return error_response(request, ResponseCode::FormErr);
+            return invalid(ResponseCode::FormErr);
         };
 
         let mut name = query.name().to_lowercase();
@@ -71,6 +80,7 @@ impl Handler {
             && let Verdict::Blocked(rule) = self.blocklist.rules().check(lookup)
         {
             debug!(name = lookup, rule, "blocked");
+            self.stats.record(Some(lookup), Outcome::Blocked);
             return self.blocked_response(request, query);
         }
 
@@ -85,6 +95,7 @@ impl Handler {
 
         if let Some(cached) = self.cache.get(&key).await {
             debug!(name = lookup, qtype = %query.query_type(), "cache hit");
+            self.stats.record(Some(lookup), Outcome::Cached);
             return finish(request, cached);
         }
 
@@ -95,10 +106,12 @@ impl Handler {
         {
             Ok(response) => {
                 self.cache.insert(key, &response).await;
+                self.stats.record(Some(lookup), Outcome::Forwarded);
                 finish(request, response)
             }
             Err(e) => {
                 warn!(name = lookup, error = %format!("{e:#}"), "all upstreams failed");
+                self.stats.record(Some(lookup), Outcome::Failed);
                 error_response(request, ResponseCode::ServFail)
             }
         }
@@ -187,7 +200,7 @@ pub fn client_max_payload(request_bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CacheConfig, UpstreamConfig};
+    use crate::config::{CacheConfig, StatsConfig, UpstreamConfig};
     use std::str::FromStr;
 
     use hickory_proto::rr::Name;
@@ -208,8 +221,9 @@ mod tests {
         Handler::new(
             Arc::new(Blocklist::new(blocking.clone()).unwrap()),
             &blocking,
-            Cache::new(CacheConfig::default()),
+            Arc::new(Cache::new(CacheConfig::default())),
             upstreams,
+            Arc::new(Stats::new(&StatsConfig::default())),
         )
     }
 

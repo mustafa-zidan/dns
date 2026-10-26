@@ -1,9 +1,11 @@
 use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use arc_swap::ArcSwap;
+use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::config::BlockingConfig;
@@ -164,9 +166,24 @@ fn adblock_domain(rest: &str) -> Option<&str> {
     (!domain.is_empty() && !domain.contains(['/', '*', '^', '|'])).then_some(domain)
 }
 
+/// The outcome of loading one blocklist source.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceStatus {
+    pub source: String,
+    /// Domains this source added that no earlier source already had.
+    pub domains: usize,
+    pub error: Option<String>,
+}
+
 /// Holds the active rules and swaps them atomically when lists are reloaded.
+/// Blocking can also be switched off, or paused for a while, at runtime.
 pub struct Blocklist {
     rules: ArcSwap<Rules>,
+    sources: ArcSwap<Vec<SourceStatus>>,
+    last_reload: Mutex<Option<SystemTime>>,
+    reloading: tokio::sync::Mutex<()>,
+    enabled: AtomicBool,
+    paused_until: Mutex<Option<Instant>>,
     config: BlockingConfig,
     http: reqwest::Client,
 }
@@ -179,6 +196,11 @@ impl Blocklist {
             .build()?;
         let blocklist = Self {
             rules: ArcSwap::default(),
+            sources: ArcSwap::default(),
+            last_reload: Mutex::new(None),
+            reloading: tokio::sync::Mutex::new(()),
+            enabled: AtomicBool::new(config.enabled),
+            paused_until: Mutex::new(None),
             config,
             http,
         };
@@ -187,12 +209,44 @@ impl Blocklist {
         Ok(blocklist)
     }
 
+    /// Whether queries are being checked against the rules right now.
     pub fn enabled(&self) -> bool {
-        self.config.enabled
+        self.enabled.load(Ordering::Relaxed) && self.paused_for().is_none()
+    }
+
+    /// Switches blocking on or off, cancelling any pause.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+        *self.paused_until.lock().unwrap() = None;
+    }
+
+    /// Stops blocking for `duration`, after which it resumes on its own.
+    pub fn pause(&self, duration: Duration) {
+        self.enabled.store(true, Ordering::Relaxed);
+        *self.paused_until.lock().unwrap() = Some(Instant::now() + duration);
+    }
+
+    /// Time left on the current pause, if any.
+    pub fn paused_for(&self) -> Option<Duration> {
+        let mut paused = self.paused_until.lock().unwrap();
+        let remaining = paused.and_then(|until| until.checked_duration_since(Instant::now()));
+        if remaining.is_none() {
+            *paused = None;
+        }
+        remaining
     }
 
     pub fn rules(&self) -> arc_swap::Guard<Arc<Rules>> {
         self.rules.load()
+    }
+
+    /// How each source fared on the last reload.
+    pub fn sources(&self) -> Arc<Vec<SourceStatus>> {
+        self.sources.load_full()
+    }
+
+    pub fn last_reload(&self) -> Option<SystemTime> {
+        *self.last_reload.lock().unwrap()
     }
 
     fn inline_rules(&self) -> Rules {
@@ -211,19 +265,32 @@ impl Blocklist {
     /// Fetches every configured source and replaces the active rules. A source
     /// that fails to load is skipped, so one bad URL does not disable blocking.
     pub async fn reload(&self) {
+        // Overlapping reloads (timer and API) would only repeat the downloads.
+        let _guard = self.reloading.lock().await;
         let mut rules = self.inline_rules();
+        let mut sources = Vec::with_capacity(self.config.lists.len());
         for source in &self.config.lists {
             match self.fetch(source).await {
                 Ok(text) => {
                     let before = rules.blocked.len();
                     rules.add_list(&text);
-                    info!(
-                        source,
-                        added = rules.blocked.len() - before,
-                        "loaded blocklist"
-                    );
+                    let added = rules.blocked.len() - before;
+                    info!(source, added, "loaded blocklist");
+                    sources.push(SourceStatus {
+                        source: source.clone(),
+                        domains: added,
+                        error: None,
+                    });
                 }
-                Err(e) => warn!(source, error = %format!("{e:#}"), "failed to load blocklist"),
+                Err(e) => {
+                    let error = format!("{e:#}");
+                    warn!(source, error, "failed to load blocklist");
+                    sources.push(SourceStatus {
+                        source: source.clone(),
+                        domains: 0,
+                        error: Some(error),
+                    });
+                }
             }
         }
         info!(
@@ -232,6 +299,8 @@ impl Blocklist {
             "blocklists ready"
         );
         self.rules.store(Arc::new(rules));
+        self.sources.store(Arc::new(sources));
+        *self.last_reload.lock().unwrap() = Some(SystemTime::now());
     }
 
     async fn fetch(&self, source: &str) -> Result<String> {
@@ -348,6 +417,20 @@ mod tests {
         assert!(set.matches("ads.example.com").is_some());
     }
 
+    #[test]
+    fn pauses_and_toggles_blocking() {
+        let blocklist = Blocklist::new(BlockingConfig::default()).unwrap();
+        assert!(blocklist.enabled());
+        blocklist.set_enabled(false);
+        assert!(!blocklist.enabled());
+        blocklist.pause(Duration::from_secs(60));
+        assert!(!blocklist.enabled());
+        assert!(blocklist.paused_for().unwrap() > Duration::from_secs(50));
+        blocklist.pause(Duration::ZERO);
+        assert!(blocklist.enabled());
+        assert!(blocklist.paused_for().is_none());
+    }
+
     #[tokio::test]
     async fn loads_lists_from_files() {
         let dir = std::env::temp_dir().join(format!("dns-test-{}", std::process::id()));
@@ -367,6 +450,10 @@ mod tests {
         assert_eq!(blocklist.rules().blocked.len(), 1);
         blocklist.reload().await;
         assert_eq!(blocklist.rules().blocked.len(), 2);
+        let sources = blocklist.sources();
+        assert_eq!(sources[0].domains, 1);
+        assert!(sources[1].error.is_some());
+        assert!(blocklist.last_reload().is_some());
         assert!(matches!(
             blocklist.rules().check("ads.example.com"),
             Verdict::Blocked(_)

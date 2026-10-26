@@ -44,3 +44,18 @@ denylist = []
 allowlist = []
 # Re-download lists this often. 0 disables refreshing.
 refresh_interval_secs = 86400
+
+[api]
+# HTTP API for stats and runtime control (see the README for endpoints).
+enabled = true
+# Keep this on loopback unless you set a token. In Docker, use "0.0.0.0:8053"
+# with a token and publish the port to reach it from the host.
+listen = "127.0.0.1:8053"
+# When set, requests need "Authorization: Bearer <token>". (Default: unset.)
+# token = "change-me"
+
+[stats]
+# Count queries per domain for the "top domains" lists. In memory only, never
+# written to disk. Set to false to keep no record of which names were looked up.
+top_domains = true
+max_tracked_domains = 10000
