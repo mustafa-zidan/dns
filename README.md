@@ -55,6 +55,14 @@ Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` envir
 
 Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), for example `DNS_LOG=dns=debug` to see each blocked name and cache hit.
 
+## Dashboard
+
+The API address also serves a web dashboard: open <http://127.0.0.1:8053/>. It shows query counts, the top queried and blocked domains, and the state of each blocklist. From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats. It refreshes every 5 seconds and loads nothing from other sites.
+
+![Dashboard](docs/dashboard.png)
+
+If `api.token` is set, the dashboard asks for it once and keeps it for that browser tab only. To reach it from another machine or from outside a Docker container, set `api.listen = "0.0.0.0:8053"` and a token, and publish the port (`-p 8053:8053`). Set `api.dashboard = false` to serve only the JSON API.
+
 ## HTTP API
 
 The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
@@ -79,9 +87,10 @@ curl -s -X PUT localhost:8053/api/blocking -H 'content-type: application/json' \
 
 Stats live in memory only and reset on restart. Set `stats.top_domains = false` to keep no per-domain counts at all.
 
+Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address, and without a token the `Host` must be an IP address or `localhost`, which stops DNS rebinding. Without a token, use the API by IP address or `localhost`, not by a hostname.
+
 ## Roadmap
 
-- Web dashboard.
 - Serving DoH/DoT to clients.
 - Per-client rules.
 

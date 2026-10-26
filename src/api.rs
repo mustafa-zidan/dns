@@ -11,14 +11,17 @@
 //! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule   |
 //! | GET    | `/api/cache`            | Number of cached answers                       |
 //! | DELETE | `/api/cache`            | Empty the cache                                |
+//!
+//! The web dashboard is served at `/` from the same address, unless
+//! `api.dashboard` is off.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -40,6 +43,7 @@ pub struct ApiState {
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
     pub token: Option<Arc<str>>,
+    pub dashboard: bool,
 }
 
 /// Binds the API and serves it until the listener fails.
@@ -63,10 +67,102 @@ pub fn router(state: ApiState) -> Router {
         .route("/check", get(check))
         .route("/cache", get(get_cache).delete(clear_cache))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
-    Router::new()
+    let mut router = Router::new()
         .route("/api/health", get(|| async { "ok" }))
-        .nest("/api", api)
+        .nest("/api", api);
+    if state.dashboard {
+        router = router
+            .route(
+                "/",
+                get(|| async { asset(INDEX_HTML, "text/html; charset=utf-8") }),
+            )
+            .route(
+                "/app.js",
+                get(|| async { asset(APP_JS, "text/javascript; charset=utf-8") }),
+            )
+            .route(
+                "/app.css",
+                get(|| async { asset(APP_CSS, "text/css; charset=utf-8") }),
+            );
+    }
+    router
+        .layer(middleware::from_fn_with_state(state.clone(), guard_browser))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+const INDEX_HTML: &str = include_str!("ui/index.html");
+const APP_JS: &str = include_str!("ui/app.js");
+const APP_CSS: &str = include_str!("ui/app.css");
+
+/// The dashboard loads nothing from other origins, so the policy allows only
+/// its own script, stylesheet and API calls.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
+    style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; \
+    form-action 'none'; frame-ancestors 'none'";
+
+fn asset(body: &'static str, content_type: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    for (name, value) in [
+        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::REFERRER_POLICY, "no-referrer"),
+    ] {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+    response
+}
+
+/// Stops other web pages from driving the API through the visitor's browser.
+///
+/// A request with an `Origin` must come from the API's own origin, which
+/// blocks cross-site form posts. Without a token, the `Host` must also be an
+/// IP address or `localhost`: a page on a hostile domain that it re-points at
+/// 127.0.0.1 (DNS rebinding) still sends its own name as the host.
+async fn guard_browser(State(state): State<ApiState>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if state.token.is_none() && !host.is_some_and(is_ip_or_localhost) {
+        return (StatusCode::FORBIDDEN, "set api.token to use a hostname").into_response();
+    }
+    if !same_origin(headers, host) {
+        return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
+    }
+    next.run(request).await
+}
+
+fn same_origin(headers: &HeaderMap, host: Option<&str>) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let origin = origin.to_str().unwrap_or_default();
+    let origin = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"));
+    origin.is_some() && origin == host
+}
+
+/// Whether a `Host` header value, with or without a port, names an IP
+/// address or `localhost`.
+fn is_ip_or_localhost(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(ip, _)| ip),
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    name.eq_ignore_ascii_case("localhost") || name.parse::<IpAddr>().is_ok()
 }
 
 async fn require_token(State(state): State<ApiState>, request: Request, next: Next) -> Response {
@@ -241,5 +337,35 @@ mod tests {
         assert!(constant_time_eq(b"secret", b"secret"));
         assert!(!constant_time_eq(b"secret", b"secreT"));
         assert!(!constant_time_eq(b"secret", b"secret2"));
+    }
+
+    #[test]
+    fn recognises_ip_hosts() {
+        for host in [
+            "127.0.0.1:8053",
+            "192.168.1.2",
+            "[::1]:8053",
+            "localhost:8053",
+            "LOCALHOST",
+        ] {
+            assert!(is_ip_or_localhost(host), "{host}");
+        }
+        for host in ["evil.example:8053", "dns.lan", "127.0.0.1.nip.io", ""] {
+            assert!(!is_ip_or_localhost(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn compares_origins() {
+        let with = |origin: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ORIGIN, origin.parse().unwrap());
+            headers
+        };
+        let host = Some("127.0.0.1:8053");
+        assert!(same_origin(&HeaderMap::new(), host));
+        assert!(same_origin(&with("http://127.0.0.1:8053"), host));
+        assert!(!same_origin(&with("http://evil.example"), host));
+        assert!(!same_origin(&with("null"), host));
     }
 }

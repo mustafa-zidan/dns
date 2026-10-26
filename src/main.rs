@@ -62,6 +62,7 @@ async fn main() -> Result<()> {
             cache,
             stats,
             token: config.api.token.as_deref().map(Arc::from),
+            dashboard: config.api.dashboard,
         };
         api::serve(config.api.listen, state).await
     };

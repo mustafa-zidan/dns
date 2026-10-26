@@ -23,6 +23,10 @@ struct Fixture {
 }
 
 async fn start(token: Option<&str>) -> Fixture {
+    start_with(token, true).await
+}
+
+async fn start_with(token: Option<&str>, dashboard: bool) -> Fixture {
     let blocking = BlockingConfig {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
@@ -50,6 +54,7 @@ async fn start(token: Option<&str>) -> Fixture {
         cache,
         stats,
         token: token.map(Arc::from),
+        dashboard,
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -220,4 +225,82 @@ async fn reports_and_clears_cache() {
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
+}
+
+#[tokio::test]
+async fn serves_dashboard_with_strict_headers() {
+    let api = start(None).await;
+    let page = api.http.get(&api.base).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    let csp = page.headers()["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("default-src 'none'") && csp.contains("script-src 'self'"));
+    assert_eq!(page.headers()["x-frame-options"], "DENY");
+    assert!(page.text().await.unwrap().contains("app.js"));
+
+    for (path, kind) in [("/app.js", "text/javascript"), ("/app.css", "text/css")] {
+        let asset = api
+            .http
+            .get(format!("{}{path}", api.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), 200, "{path}");
+        assert!(
+            asset.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with(kind)
+        );
+    }
+
+    let off = start_with(None, false).await;
+    let page = off.http.get(&off.base).send().await.unwrap();
+    assert_eq!(page.status(), 404);
+}
+
+#[tokio::test]
+async fn rejects_rebound_hosts_and_cross_site_requests() {
+    let api = start(None).await;
+    let url = format!("{}/api/stats", api.base);
+
+    // A hostile page re-pointed at 127.0.0.1 still sends its own host name.
+    let rebound = api
+        .http
+        .get(&url)
+        .header("host", "evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rebound.status(), 403);
+
+    let cross_site = api
+        .http
+        .post(format!("{}/api/blocking/reload", api.base))
+        .header("origin", "http://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_site.status(), 403);
+
+    let host = api.base.trim_start_matches("http://");
+    let same_site = api
+        .http
+        .get(&url)
+        .header("origin", format!("http://{host}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(same_site.status(), 200);
+
+    // With a token, a hostname is fine: the attacker's origin has no token.
+    let named = start(Some("s3cret")).await;
+    let response = named
+        .http
+        .get(format!("{}/api/stats", named.base))
+        .header("host", "dns.lan")
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 }

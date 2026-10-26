@@ -146,6 +146,8 @@ pub struct ApiConfig {
     pub listen: SocketAddr,
     /// When set, every API request must send `Authorization: Bearer <token>`.
     pub token: Option<String>,
+    /// Serve the web dashboard at `/` on the API address.
+    pub dashboard: bool,
 }
 
 impl Default for ApiConfig {
@@ -154,6 +156,7 @@ impl Default for ApiConfig {
             enabled: true,
             listen: "127.0.0.1:8053".parse().unwrap(),
             token: None,
+            dashboard: true,
         }
     }
 }

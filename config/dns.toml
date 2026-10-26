@@ -53,6 +53,8 @@ enabled = true
 listen = "127.0.0.1:8053"
 # When set, requests need "Authorization: Bearer <token>". (Default: unset.)
 # token = "change-me"
+# Serve the web dashboard at http://<listen>/. (Default: true.)
+dashboard = true
 
 [stats]
 # Count queries per domain for the "top domains" lists. In memory only, never
