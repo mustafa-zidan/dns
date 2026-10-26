@@ -1,0 +1,19 @@
+# Supply-chain settings. pnpm 12 rejects unknown keys here, so a typo fails
+# the install instead of silently dropping a policy.
+
+# Install only versions published at least 7 days ago, so a compromised
+# release is usually caught and pulled before it reaches us.
+minimumReleaseAge: 10080
+
+# Refuse a version whose publish trust is weaker than an earlier one's, such
+# as a release without provenance after releases that had it.
+trustPolicy: no-downgrade
+
+# Transitive dependencies may only come from the registry, never from git
+# repositories or tarball URLs.
+blockExoticSubdeps: true
+
+# Dependencies run no install scripts unless listed in allowBuilds, and an
+# unlisted package with a build script fails the install.
+strictDepBuilds: true
+allowBuilds: {}
