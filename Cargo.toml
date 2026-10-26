@@ -2,6 +2,10 @@
 name = "dns"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+description = "An ad-blocking, privacy-focused DNS server"
+repository = "https://github.com/mustafa-zidan/dns"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.104"
