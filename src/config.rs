@@ -37,17 +37,26 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UpstreamConfig {
-    /// Upstream resolvers, tried in order until one answers.
-    /// Accepts `1.1.1.1`, `1.1.1.1:53` or `udp://1.1.1.1:53`.
+    /// Upstream resolvers, tried in order until one answers. Accepts plain
+    /// DNS (`1.1.1.1`, `udp://1.1.1.1:53`, `tcp://1.1.1.1`), DNS-over-TLS
+    /// (`tls://1.1.1.1#cloudflare-dns.com`, `tls://dns.quad9.net`) and
+    /// DNS-over-HTTPS (`https://cloudflare-dns.com/dns-query`).
     pub servers: Vec<UpstreamAddr>,
+    /// Plain DNS servers used only to look up the hostnames of encrypted
+    /// upstreams. Not needed when every encrypted upstream is given by IP.
+    pub bootstrap: Vec<UpstreamAddr>,
     pub timeout_ms: u64,
 }
 
 impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
-            servers: vec!["1.1.1.1:53".parse().unwrap(), "9.9.9.9:53".parse().unwrap()],
-            timeout_ms: 2000,
+            servers: vec![
+                "tls://1.1.1.1#cloudflare-dns.com".parse().unwrap(),
+                "tls://9.9.9.9#dns.quad9.net".parse().unwrap(),
+            ],
+            bootstrap: vec!["1.1.1.1".parse().unwrap(), "9.9.9.9".parse().unwrap()],
+            timeout_ms: 3000,
         }
     }
 }

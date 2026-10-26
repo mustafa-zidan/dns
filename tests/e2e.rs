@@ -14,7 +14,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
-use dns::config::{BlockingConfig, CacheConfig};
+use dns::config::{BlockingConfig, CacheConfig, UpstreamConfig};
 use dns::handler::Handler;
 use dns::server;
 use dns::upstream::{UpstreamAddr, Upstreams};
@@ -86,7 +86,11 @@ async fn start_server(upstream: SocketAddr) -> (SocketAddr, SocketAddr) {
         Arc::new(Blocklist::new(blocking.clone()).unwrap()),
         &blocking,
         Cache::new(CacheConfig::default()),
-        Upstreams::new(vec![UpstreamAddr::Udp(upstream)], Duration::from_secs(2)),
+        Upstreams::new(&UpstreamConfig {
+            servers: vec![UpstreamAddr::Udp(upstream)],
+            ..UpstreamConfig::default()
+        })
+        .unwrap(),
     ));
     let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let udp = server::bind_udp(any, Arc::clone(&handler)).await.unwrap();

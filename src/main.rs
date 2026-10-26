@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
         blocklist.spawn_refresh();
     }
 
-    let upstreams = Upstreams::new(config.upstream.servers.clone(), config.upstream.timeout());
+    let upstreams = Upstreams::new(&config.upstream)?;
     info!(servers = ?config.upstream.servers.iter().map(ToString::to_string).collect::<Vec<_>>(), "upstreams");
     let handler = Arc::new(Handler::new(
         blocklist,
