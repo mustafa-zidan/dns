@@ -17,6 +17,6 @@ COPY config/dns.toml /etc/dns/dns.toml
 ENV DNS_CONFIG=/etc/dns/dns.toml
 # Docker lets unprivileged users bind ports below 1024 inside the container,
 # so the server can listen on 53 without running as root.
-EXPOSE 53/udp 53/tcp
+EXPOSE 53/udp 53/tcp 853/tcp 443/tcp
 USER nonroot
 ENTRYPOINT ["/usr/local/bin/dns"]

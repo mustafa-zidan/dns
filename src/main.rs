@@ -4,13 +4,16 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use dns::api::{self, ApiState};
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
+use dns::certs::CertStore;
 use dns::config::Config;
+use dns::doh;
 use dns::handler::Handler;
 use dns::server;
 use dns::stats::Stats;
@@ -67,12 +70,46 @@ async fn main() -> Result<()> {
         api::serve(config.api.listen, state).await
     };
 
+    let idle = Duration::from_secs(config.server.tcp_idle_timeout_secs);
+    let certs = match (&config.tls.cert_file, &config.tls.key_file) {
+        (Some(cert), Some(key)) if config.tls.enabled() => {
+            let certs = CertStore::load(cert, key)?;
+            certs.spawn_reload(Duration::from_secs(config.tls.reload_interval_secs));
+            Some(certs)
+        }
+        _ => None,
+    };
+    let dot = async {
+        match &certs {
+            Some(certs) if !config.tls.dot_listen.is_empty() => {
+                let tls = TlsAcceptor::from(certs.server_config(&[server::DOT_ALPN]));
+                server::serve_dot(&config.tls.dot_listen, tls, Arc::clone(&handler), idle).await
+            }
+            _ => std::future::pending().await,
+        }
+    };
+    let doh = async {
+        match &certs {
+            Some(certs) if !config.tls.doh_listen.is_empty() => {
+                let tls = TlsAcceptor::from(certs.server_config(doh::ALPN));
+                let path = &config.tls.doh_path;
+                doh::serve(
+                    &config.tls.doh_listen,
+                    path,
+                    tls,
+                    Arc::clone(&handler),
+                    idle,
+                )
+                .await
+            }
+            _ => std::future::pending().await,
+        }
+    };
+
     tokio::select! {
-        result = server::serve(
-            &config.server.listen,
-            handler,
-            Duration::from_secs(config.server.tcp_idle_timeout_secs),
-        ) => result,
+        result = server::serve(&config.server.listen, Arc::clone(&handler), idle) => result,
+        result = dot => result,
+        result = doh => result,
         result = api => result,
         _ = shutdown_signal() => {
             info!("shutting down");

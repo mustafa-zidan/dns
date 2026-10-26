@@ -6,7 +6,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
-[![DoT / DoH](https://img.shields.io/badge/upstreams-DoT%20%7C%20DoH-success)](#features)
+[![DoT / DoH](https://img.shields.io/badge/DoT%20%7C%20DoH-clients%20%26%20upstreams-success)](#features)
 
 A DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
 
@@ -15,6 +15,7 @@ It sits between your devices and an upstream resolver. Queries for domains on yo
 ## Features
 
 - UDP and TCP listeners, with TC-bit truncation for oversized UDP answers.
+- DNS-over-TLS and DNS-over-HTTPS (HTTP/2 and HTTP/1.1, GET and POST) for your own devices, with certificates reloaded from disk when they are renewed.
 - Encrypted upstreams: DNS-over-TLS (the default, to Cloudflare and Quad9) and DNS-over-HTTPS, plus plain UDP/TCP. Upstreams are tried in order with failover.
 - Upstream hostnames are resolved through configurable bootstrap servers, never through the OS resolver, so the server can safely be its own host's resolver.
 - TTL-aware cache with min/max TTL clamping and RFC 2308 negative caching.
@@ -40,6 +41,33 @@ docker run -d --name dns -p 53:53/udp -p 53:53/tcp \
 ```
 
 The container runs as a non-root user.
+
+## Encrypted DNS for your devices
+
+Set `tls.cert_file` and `tls.key_file` to a PEM certificate chain and private key, then turn on the listeners you want:
+
+```toml
+[tls]
+cert_file = "/etc/dns/tls/fullchain.pem"
+key_file = "/etc/dns/tls/privkey.pem"
+dot_listen = ["0.0.0.0:853"]   # DNS-over-TLS, for Android "Private DNS" and similar
+doh_listen = ["0.0.0.0:443"]   # DNS-over-HTTPS at https://<name>/dns-query
+```
+
+The certificate must cover the name your devices connect to, so use one from a public CA (for example Let's Encrypt) or a CA your devices trust. The server checks the files every `tls.reload_interval_secs` (default one hour) and picks up a renewed certificate without a restart. If the new files don't load, it keeps serving the old certificate and logs the error.
+
+In Docker, mount the certificate directory and publish the ports:
+
+```sh
+docker run -d --name dns -p 53:53/udp -p 53:53/tcp -p 853:853/tcp -p 443:443/tcp \
+  -v "$PWD/dns.toml:/etc/dns/dns.toml:ro" \
+  -v "/etc/letsencrypt/live/dns.example.com:/etc/dns/tls:ro" \
+  ghcr.io/mustafa-zidan/dns:latest
+```
+
+The container user must be able to read the key file. Let's Encrypt's `live` directory holds symlinks into `archive`, so mount the parent `/etc/letsencrypt` instead if the links don't resolve inside the container.
+
+Responses to padded queries are padded to 468-byte blocks (RFC 8467). DoH answers carry a `Cache-Control: max-age` equal to their smallest TTL.
 
 ## Running from source
 
@@ -116,7 +144,6 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Serving DoH/DoT to clients.
 - Per-client rules.
 
 ## Development

@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -11,6 +11,7 @@ use crate::upstream::UpstreamAddr;
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub server: ServerConfig,
+    pub tls: TlsConfig,
     pub upstream: UpstreamConfig,
     pub cache: CacheConfig,
     pub blocking: BlockingConfig,
@@ -33,6 +34,44 @@ impl Default for ServerConfig {
             listen: vec!["0.0.0.0:53".parse().unwrap()],
             tcp_idle_timeout_secs: 10,
         }
+    }
+}
+
+/// Encrypted DNS for clients: DNS-over-TLS and DNS-over-HTTPS listeners
+/// sharing one certificate.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TlsConfig {
+    /// PEM certificate chain, leaf first, such as Let's Encrypt's fullchain.pem.
+    pub cert_file: Option<PathBuf>,
+    /// PEM private key for the certificate.
+    pub key_file: Option<PathBuf>,
+    /// DNS-over-TLS (RFC 7858) listeners, usually port 853.
+    pub dot_listen: Vec<SocketAddr>,
+    /// DNS-over-HTTPS (RFC 8484) listeners, usually port 443.
+    pub doh_listen: Vec<SocketAddr>,
+    /// URL path DoH clients send queries to.
+    pub doh_path: String,
+    /// How often to check the certificate files for a renewed certificate.
+    pub reload_interval_secs: u64,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_file: None,
+            key_file: None,
+            dot_listen: Vec::new(),
+            doh_listen: Vec::new(),
+            doh_path: "/dns-query".into(),
+            reload_interval_secs: 3600,
+        }
+    }
+}
+
+impl TlsConfig {
+    pub fn enabled(&self) -> bool {
+        !self.dot_listen.is_empty() || !self.doh_listen.is_empty()
     }
 }
 
@@ -199,6 +238,20 @@ impl Config {
             config.api.token.as_deref() != Some(""),
             "api.token is empty; remove it or set a value"
         );
+        if config.tls.enabled() {
+            anyhow::ensure!(
+                config.tls.cert_file.is_some() && config.tls.key_file.is_some(),
+                "tls.cert_file and tls.key_file are required to serve DoT or DoH"
+            );
+        }
+        anyhow::ensure!(
+            config.tls.doh_path.starts_with('/'),
+            "tls.doh_path must start with /"
+        );
+        anyhow::ensure!(
+            config.tls.reload_interval_secs > 0,
+            "tls.reload_interval_secs must be positive"
+        );
         for origin in &mut config.api.cors_origins {
             *origin = parse_origin(origin)
                 .with_context(|| format!("api.cors_origins: {origin:?} is not a web origin"))?;
@@ -229,6 +282,25 @@ fn parse_origin(origin: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encrypted_listeners_need_a_certificate() {
+        let err = Config::parse("[tls]\ndot_listen = [\"0.0.0.0:853\"]").unwrap_err();
+        assert!(err.to_string().contains("cert_file"), "{err}");
+        let config = Config::parse(
+            r#"
+            [tls]
+            cert_file = "/etc/dns/tls/fullchain.pem"
+            key_file = "/etc/dns/tls/privkey.pem"
+            dot_listen = ["0.0.0.0:853"]
+            doh_listen = ["0.0.0.0:443"]
+            "#,
+        )
+        .unwrap();
+        assert!(config.tls.enabled());
+        assert_eq!(config.tls.doh_path, "/dns-query");
+        assert!(Config::parse("[tls]\ndoh_path = \"dns-query\"").is_err());
+    }
 
     #[test]
     fn sample_configs_parse() {
