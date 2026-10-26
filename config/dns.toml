@@ -1,0 +1,39 @@
+# Example configuration. Every key is optional; the values shown are the defaults
+# unless noted.
+
+[server]
+# Each address is served over both UDP and TCP.
+listen = ["0.0.0.0:53"]
+tcp_idle_timeout_secs = 10
+
+[upstream]
+# Tried in order until one answers. "1.1.1.1", "1.1.1.1:53", "udp://1.1.1.1:53"
+# and "tcp://1.1.1.1:53" are all accepted.
+servers = ["1.1.1.1", "9.9.9.9"]
+timeout_ms = 2000
+
+[cache]
+enabled = true
+max_entries = 10000
+min_ttl = 0
+max_ttl = 86400
+# Used for NXDOMAIN / NODATA answers that carry no SOA record.
+negative_ttl = 300
+
+[blocking]
+enabled = true
+# "nxdomain", "null_ip" (0.0.0.0 / ::) or "refused".
+mode = "nxdomain"
+blocked_ttl = 60
+# URLs or file paths. Hosts files, plain domain lists and adblock-style
+# "||domain^" rules are understood. (Default: no lists.)
+lists = [
+  "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+  "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+]
+# Extra domains to block, subdomains included.
+denylist = []
+# Domains that are never blocked, subdomains included.
+allowlist = []
+# Re-download lists this often. 0 disables refreshing.
+refresh_interval_secs = 86400
