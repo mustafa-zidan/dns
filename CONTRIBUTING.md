@@ -31,6 +31,7 @@ dig @127.0.0.1 -p 5353 example.com
 - Keep each PR to one change, and explain why it is needed, not only what it does.
 - Add tests for behavior changes. `tests/e2e.rs` and `tests/encrypted.rs` show how to run the server against fake upstreams.
 - CI must pass: formatting, clippy, tests, the MSRV check, the live upstream check and the Docker build.
+- Pin GitHub Actions to a full commit SHA with the version in a comment (`uses: owner/action@<sha> # v4`), and Docker base images by digest. Never use a branch or a moving tag. Dependabot updates the pins.
 - Privacy is a feature here. Changes that log, store or send more about clients' queries need a config switch, off by default unless there's a strong reason.
 
 ## License
