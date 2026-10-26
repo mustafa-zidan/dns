@@ -7,11 +7,13 @@ use clap::Parser;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use dns::api::{self, ApiState};
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
 use dns::config::Config;
 use dns::handler::Handler;
 use dns::server;
+use dns::stats::Stats;
 use dns::upstream::Upstreams;
 
 #[derive(Parser)]
@@ -35,18 +37,34 @@ async fn main() -> Result<()> {
     };
 
     let blocklist = Arc::new(Blocklist::new(config.blocking.clone())?);
-    if config.blocking.enabled {
-        blocklist.spawn_refresh();
-    }
+    // Lists load even when blocking starts disabled, so it can be switched on
+    // through the API without waiting for a download.
+    blocklist.spawn_refresh();
 
     let upstreams = Upstreams::new(&config.upstream)?;
     info!(servers = ?config.upstream.servers.iter().map(ToString::to_string).collect::<Vec<_>>(), "upstreams");
+    let cache = Arc::new(Cache::new(config.cache.clone()));
+    let stats = Arc::new(Stats::new(&config.stats));
     let handler = Arc::new(Handler::new(
-        blocklist,
+        Arc::clone(&blocklist),
         &config.blocking,
-        Cache::new(config.cache.clone()),
+        Arc::clone(&cache),
         upstreams,
+        Arc::clone(&stats),
     ));
+
+    let api = async {
+        if !config.api.enabled {
+            return std::future::pending().await;
+        }
+        let state = ApiState {
+            blocklist,
+            cache,
+            stats,
+            token: config.api.token.as_deref().map(Arc::from),
+        };
+        api::serve(config.api.listen, state).await
+    };
 
     tokio::select! {
         result = server::serve(
@@ -54,6 +72,7 @@ async fn main() -> Result<()> {
             handler,
             Duration::from_secs(config.server.tcp_idle_timeout_secs),
         ) => result,
+        result = api => result,
         _ = shutdown_signal() => {
             info!("shutting down");
             Ok(())

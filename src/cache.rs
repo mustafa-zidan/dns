@@ -51,6 +51,22 @@ impl Cache {
         Self { inner, config }
     }
 
+    /// Number of cached answers (approximate while writes are in flight).
+    pub fn len(&self) -> u64 {
+        self.inner.as_ref().map_or(0, |c| c.entry_count())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Drops every cached answer.
+    pub fn clear(&self) {
+        if let Some(inner) = &self.inner {
+            inner.invalidate_all();
+        }
+    }
+
     /// Returns a cached response with TTLs reduced by the time it spent in the cache.
     pub async fn get(&self, key: &CacheKey) -> Option<Message> {
         let entry = self.inner.as_ref()?.get(key).await?;
