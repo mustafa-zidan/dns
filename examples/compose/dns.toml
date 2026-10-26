@@ -1,0 +1,15 @@
+# Server settings for compose.yaml. See config/dns.toml for every option.
+
+[blocking]
+lists = [
+  "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+  "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+]
+
+[api]
+# Listen on all interfaces inside the container; compose publishes the port.
+listen = "0.0.0.0:8053"
+# Required, since the API is reachable outside the container.
+token = "change-me"
+# The dashboard's address in the browser.
+cors_origins = ["http://localhost:8080"]

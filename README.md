@@ -55,6 +55,39 @@ Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` envir
 
 Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), for example `DNS_LOG=dns=debug` to see each blocked name and cache hit.
 
+## Dashboard
+
+The dashboard is a separate web app in [`web/`](web/), published as its own image, `ghcr.io/mustafa-zidan/dns-dashboard`. It calls the server's API from the browser. It shows:
+
+- query counts and the share that was blocked
+- the top queried and top blocked domains
+- the state of each blocklist
+
+From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats.
+
+![Dashboard](docs/dashboard.png)
+
+The quickest way to run both is the [compose example](examples/compose/): set a token in `dns.toml`, run `docker compose up -d`, and open <http://localhost:8080>.
+
+To run the dashboard on its own, tell it where the browser reaches the API:
+
+```sh
+docker run -d --name dns-dashboard -p 8080:8080 \
+  -e DNS_API_URL=http://localhost:8053 \
+  ghcr.io/mustafa-zidan/dns-dashboard:latest
+```
+
+On the server, add the dashboard's address to `api.cors_origins` and set `api.token`:
+
+```toml
+[api]
+listen = "0.0.0.0:8053"
+token = "change-me"
+cors_origins = ["http://localhost:8080"]
+```
+
+Leave `DNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
+
 ## HTTP API
 
 The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
@@ -79,9 +112,10 @@ curl -s -X PUT localhost:8053/api/blocking -H 'content-type: application/json' \
 
 Stats live in memory only and reset on restart. Set `stats.top_domains = false` to keep no per-domain counts at all.
 
+Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address or from one listed in `api.cors_origins`. Without a token, the `Host` must also be an IP address or `localhost`, which stops DNS rebinding. So without a token, reach the API by IP address or `localhost`, not by a hostname.
+
 ## Roadmap
 
-- Web dashboard.
 - Serving DoH/DoT to clients.
 - Per-client rules.
 

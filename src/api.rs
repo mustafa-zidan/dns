@@ -11,20 +11,24 @@
 //! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule   |
 //! | GET    | `/api/cache`            | Number of cached answers                       |
 //! | DELETE | `/api/cache`            | Empty the cache                                |
+//!
+//! The web dashboard is a separate app (see `web/`) that calls this API from
+//! the origins listed in `api.cors_origins`.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
 use crate::blocklist::{Blocklist, SourceStatus, Verdict};
@@ -40,6 +44,9 @@ pub struct ApiState {
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
     pub token: Option<Arc<str>>,
+    /// Normalized origins (`scheme://host[:port]`) allowed to call the API
+    /// from a browser.
+    pub cors_origins: Arc<[String]>,
 }
 
 /// Binds the API and serves it until the listener fails.
@@ -63,10 +70,95 @@ pub fn router(state: ApiState) -> Router {
         .route("/check", get(check))
         .route("/cache", get(get_cache).delete(clear_cache))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .nest("/api", api)
-        .with_state(state)
+        .layer(middleware::from_fn_with_state(state.clone(), guard_browser))
+        .layer(middleware::from_fn(security_headers));
+    // Outermost, so preflight requests are answered before the token check.
+    let router = match cors(&state.cors_origins) {
+        Some(cors) => router.layer(cors),
+        None => router,
+    };
+    router.with_state(state)
+}
+
+fn cors(origins: &[String]) -> Option<CorsLayer> {
+    if origins.is_empty() {
+        return None;
+    }
+    let origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    Some(
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::PUT, Method::POST, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+            .max_age(Duration::from_secs(600)),
+    )
+}
+
+/// The API only returns JSON, so nothing it sends may run, load or be framed.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; frame-ancestors 'none'";
+
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    for (name, value) in [
+        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::REFERRER_POLICY, "no-referrer"),
+    ] {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+    response
+}
+
+/// Stops other web pages from driving the API through the visitor's browser.
+///
+/// A request with an `Origin` must come from the API's own origin or one in
+/// `api.cors_origins`, which blocks cross-site form posts (CORS alone only
+/// hides the response, it does not stop the request). Without a token, the
+/// `Host` must also be an
+/// IP address or `localhost`: a page on a hostile domain that it re-points at
+/// 127.0.0.1 (DNS rebinding) still sends its own name as the host.
+async fn guard_browser(State(state): State<ApiState>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if state.token.is_none() && !host.is_some_and(is_ip_or_localhost) {
+        return (StatusCode::FORBIDDEN, "set api.token to use a hostname").into_response();
+    }
+    if !allowed_origin(headers, host, &state.cors_origins) {
+        return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
+    }
+    next.run(request).await
+}
+
+fn allowed_origin(headers: &HeaderMap, host: Option<&str>, allowed: &[String]) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let origin = origin.to_str().unwrap_or_default();
+    if allowed.iter().any(|allowed| allowed == origin) {
+        return true;
+    }
+    let authority = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"));
+    authority.is_some() && authority == host
+}
+
+/// Whether a `Host` header value, with or without a port, names an IP
+/// address or `localhost`.
+fn is_ip_or_localhost(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(ip, _)| ip),
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    name.eq_ignore_ascii_case("localhost") || name.parse::<IpAddr>().is_ok()
 }
 
 async fn require_token(State(state): State<ApiState>, request: Request, next: Next) -> Response {
@@ -241,5 +333,46 @@ mod tests {
         assert!(constant_time_eq(b"secret", b"secret"));
         assert!(!constant_time_eq(b"secret", b"secreT"));
         assert!(!constant_time_eq(b"secret", b"secret2"));
+    }
+
+    #[test]
+    fn recognises_ip_hosts() {
+        for host in [
+            "127.0.0.1:8053",
+            "192.168.1.2",
+            "[::1]:8053",
+            "localhost:8053",
+            "LOCALHOST",
+        ] {
+            assert!(is_ip_or_localhost(host), "{host}");
+        }
+        for host in ["evil.example:8053", "dns.lan", "127.0.0.1.nip.io", ""] {
+            assert!(!is_ip_or_localhost(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn compares_origins() {
+        let with = |origin: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ORIGIN, origin.parse().unwrap());
+            headers
+        };
+        let host = Some("127.0.0.1:8053");
+        let allowed = ["http://localhost:8080".to_string()];
+        assert!(allowed_origin(&HeaderMap::new(), host, &[]));
+        assert!(allowed_origin(&with("http://127.0.0.1:8053"), host, &[]));
+        assert!(allowed_origin(
+            &with("http://localhost:8080"),
+            host,
+            &allowed
+        ));
+        assert!(!allowed_origin(&with("http://localhost:8080"), host, &[]));
+        assert!(!allowed_origin(
+            &with("http://evil.example"),
+            host,
+            &allowed
+        ));
+        assert!(!allowed_origin(&with("null"), host, &allowed));
     }
 }

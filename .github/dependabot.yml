@@ -18,3 +18,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Covers pnpm too. The cooldown matches minimumReleaseAge in
+  # web/pnpm-workspace.yaml, so updates are never too new to install.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /web
+    schedule:
+      interval: weekly

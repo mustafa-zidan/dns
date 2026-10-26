@@ -53,6 +53,9 @@ enabled = true
 listen = "127.0.0.1:8053"
 # When set, requests need "Authorization: Bearer <token>". (Default: unset.)
 # token = "change-me"
+# Web origins allowed to call the API from a browser, such as the address
+# you open the dashboard on. Exact matches only. (Default: none.)
+# cors_origins = ["http://localhost:8080"]
 
 [stats]
 # Count queries per domain for the "top domains" lists. In memory only, never

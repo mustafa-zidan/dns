@@ -62,6 +62,7 @@ async fn main() -> Result<()> {
             cache,
             stats,
             token: config.api.token.as_deref().map(Arc::from),
+            cors_origins: config.api.cors_origins.clone().into(),
         };
         api::serve(config.api.listen, state).await
     };

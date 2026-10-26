@@ -23,6 +23,10 @@ struct Fixture {
 }
 
 async fn start(token: Option<&str>) -> Fixture {
+    start_with(token, &[]).await
+}
+
+async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
     let blocking = BlockingConfig {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
@@ -50,6 +54,7 @@ async fn start(token: Option<&str>) -> Fixture {
         cache,
         stats,
         token: token.map(Arc::from),
+        cors_origins: cors_origins.iter().map(|o| o.to_string()).collect(),
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -220,4 +225,108 @@ async fn reports_and_clears_cache() {
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
+}
+
+#[tokio::test]
+async fn allows_configured_dashboard_origins() {
+    const DASHBOARD: &str = "http://localhost:8080";
+    let api = start_with(Some("s3cret"), &[DASHBOARD]).await;
+    let url = format!("{}/api/blocking", api.base);
+
+    // The browser's preflight carries no token and must still succeed.
+    let preflight = api
+        .http
+        .request(reqwest::Method::OPTIONS, &url)
+        .header("origin", DASHBOARD)
+        .header("access-control-request-method", "PUT")
+        .header(
+            "access-control-request-headers",
+            "authorization,content-type",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(preflight.status().is_success(), "{}", preflight.status());
+    assert_eq!(
+        preflight.headers()["access-control-allow-origin"],
+        DASHBOARD
+    );
+    let allowed = preflight.headers()["access-control-allow-methods"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(allowed.contains("PUT"), "{allowed}");
+
+    let response = api
+        .http
+        .get(&url)
+        .header("origin", DASHBOARD)
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["access-control-allow-origin"], DASHBOARD);
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "default-src 'none'; frame-ancestors 'none'"
+    );
+
+    let other = api
+        .http
+        .get(&url)
+        .header("origin", "http://localhost:9999")
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other.status(), 403);
+    assert!(other.headers().get("access-control-allow-origin").is_none());
+}
+
+#[tokio::test]
+async fn rejects_rebound_hosts_and_cross_site_requests() {
+    let api = start(None).await;
+    let url = format!("{}/api/stats", api.base);
+
+    // A hostile page re-pointed at 127.0.0.1 still sends its own host name.
+    let rebound = api
+        .http
+        .get(&url)
+        .header("host", "evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rebound.status(), 403);
+
+    let cross_site = api
+        .http
+        .post(format!("{}/api/blocking/reload", api.base))
+        .header("origin", "http://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_site.status(), 403);
+
+    let host = api.base.trim_start_matches("http://");
+    let same_site = api
+        .http
+        .get(&url)
+        .header("origin", format!("http://{host}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(same_site.status(), 200);
+
+    // With a token, a hostname is fine: the attacker's origin has no token.
+    let named = start(Some("s3cret")).await;
+    let response = named
+        .http
+        .get(format!("{}/api/stats", named.base))
+        .header("host", "dns.lan")
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 }
