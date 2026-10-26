@@ -28,7 +28,7 @@ dig @127.0.0.1 -p 5353 example.com
 
 ### Dashboard
 
-The dashboard in `web/` is a React and TypeScript app built with Vite. You need Node 24 and pnpm; `corepack enable` provides the pnpm version pinned in `web/package.json`.
+The dashboard in `web/` is a React and TypeScript app built with Vite. You need Node 26 and pnpm. Corepack (`npm install -g corepack && corepack enable`) provides the pnpm version pinned in `web/package.json`.
 
 ```sh
 cd web
