@@ -7,12 +7,13 @@ It sits between your devices and an upstream resolver. Queries for domains on yo
 ## Features
 
 - UDP and TCP listeners, with TC-bit truncation for oversized UDP answers.
-- Forwarding to one or more upstream resolvers with failover, and a TCP retry when an upstream truncates.
+- Encrypted upstreams: DNS-over-TLS (the default, to Cloudflare and Quad9) and DNS-over-HTTPS, plus plain UDP/TCP. Upstreams are tried in order with failover.
+- Upstream hostnames are resolved through configurable bootstrap servers, never through the OS resolver, so the server can safely be its own host's resolver.
 - TTL-aware cache with min/max TTL clamping and RFC 2308 negative caching.
 - Blocklists from URLs or files, refreshed on a schedule. Hosts files, plain domain lists and adblock-style `||domain^` / `@@||domain^` rules are understood. A rule blocks the domain and all its subdomains.
 - Inline denylist and allowlist. The allowlist always wins.
 - Blocked names answered with NXDOMAIN, `0.0.0.0` / `::`, or REFUSED.
-- Privacy: queries sent upstream get a fresh random ID and source port and carry none of the client's EDNS options, so EDNS Client Subnet never leaks your network. Nothing is logged per query unless you turn on debug logging.
+- Privacy: queries sent upstream get a fresh random ID and source port and carry none of the client's EDNS options, so EDNS Client Subnet never leaks your network. Encrypted queries are padded to 128-byte blocks (RFC 8467) so their size doesn't reveal the name. DoH requests send no User-Agent. Nothing is logged per query unless you turn on debug logging.
 
 ## Running with Docker
 
@@ -48,7 +49,6 @@ Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.
 
 ## Roadmap
 
-- DNS-over-HTTPS and DNS-over-TLS upstreams.
 - HTTP API with query statistics, top blocked domains and a blocking toggle.
 - Web dashboard.
 - Serving DoH/DoT to clients.
@@ -60,4 +60,5 @@ Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+cargo test --test live -- --ignored   # queries real public resolvers
 ```

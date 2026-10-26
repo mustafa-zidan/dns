@@ -187,9 +187,8 @@ pub fn client_max_payload(request_bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CacheConfig;
+    use crate::config::{CacheConfig, UpstreamConfig};
     use std::str::FromStr;
-    use std::time::Duration;
 
     use hickory_proto::rr::Name;
 
@@ -200,10 +199,12 @@ mod tests {
             ..BlockingConfig::default()
         };
         // Port 9 (discard) on loopback: nothing answers, so upstream queries fail fast.
-        let upstreams = Upstreams::new(
-            vec!["127.0.0.1:9".parse().unwrap()],
-            Duration::from_millis(200),
-        );
+        let upstreams = Upstreams::new(&UpstreamConfig {
+            servers: vec!["127.0.0.1:9".parse().unwrap()],
+            timeout_ms: 200,
+            ..UpstreamConfig::default()
+        })
+        .unwrap();
         Handler::new(
             Arc::new(Blocklist::new(blocking.clone()).unwrap()),
             &blocking,
