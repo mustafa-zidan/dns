@@ -7,10 +7,17 @@ listen = ["0.0.0.0:53"]
 tcp_idle_timeout_secs = 10
 
 [upstream]
-# Tried in order until one answers. "1.1.1.1", "1.1.1.1:53", "udp://1.1.1.1:53"
-# and "tcp://1.1.1.1:53" are all accepted.
-servers = ["1.1.1.1", "9.9.9.9"]
-timeout_ms = 2000
+# Tried in order until one answers. Encrypted transports are the default, so
+# your ISP (or anyone on the path) cannot see or tamper with your lookups.
+#
+#   DNS-over-TLS:   "tls://1.1.1.1#cloudflare-dns.com"  (IP, then the name on its certificate)
+#                   "tls://dns.quad9.net"               (hostname, looked up via bootstrap)
+#   DNS-over-HTTPS: "https://cloudflare-dns.com/dns-query"
+#   Plain DNS:      "1.1.1.1", "udp://1.1.1.1:53", "tcp://1.1.1.1"
+servers = ["tls://1.1.1.1#cloudflare-dns.com", "tls://9.9.9.9#dns.quad9.net"]
+# Plain DNS servers used only to look up the hostnames of encrypted upstreams.
+bootstrap = ["1.1.1.1", "9.9.9.9"]
+timeout_ms = 3000
 
 [cache]
 enabled = true

@@ -1,0 +1,76 @@
+//! Plain, unencrypted DNS over UDP and TCP.
+
+use std::net::SocketAddr;
+
+use anyhow::{Context, Result, bail};
+use hickory_proto::op::Message;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
+use tracing::debug;
+
+use super::{UpstreamAddr, is_response_to};
+
+pub async fn exchange(server: &UpstreamAddr, query: &Message) -> Result<Message> {
+    let bytes = query.to_vec()?;
+    match server {
+        UpstreamAddr::Udp(addr) => {
+            let response = udp_exchange(*addr, &bytes, query).await?;
+            if response.truncation {
+                debug!(%addr, "truncated upstream answer, retrying over TCP");
+                return tcp_exchange(*addr, &bytes, query).await;
+            }
+            Ok(response)
+        }
+        UpstreamAddr::Tcp(addr) => tcp_exchange(*addr, &bytes, query).await,
+        other => bail!("{other} is not a plain DNS upstream"),
+    }
+}
+
+async fn udp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result<Message> {
+    // A fresh socket per query gives every query a random source port.
+    let bind: SocketAddr = if addr.is_ipv4() {
+        "0.0.0.0:0".parse()?
+    } else {
+        "[::]:0".parse()?
+    };
+    let socket = UdpSocket::bind(bind).await?;
+    socket.connect(addr).await?;
+    socket.send(bytes).await?;
+
+    let mut buf = vec![0u8; 65_535];
+    loop {
+        let len = socket.recv(&mut buf).await?;
+        match Message::from_vec(&buf[..len]) {
+            Ok(response) if is_response_to(&response, query) => return Ok(response),
+            Ok(_) => debug!(%addr, "ignoring mismatched upstream answer"),
+            Err(e) => debug!(%addr, error = %e, "ignoring malformed upstream answer"),
+        }
+    }
+}
+
+async fn tcp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result<Message> {
+    let mut stream = TcpStream::connect(addr).await?;
+    stream_exchange(&mut stream, bytes, query).await
+}
+
+/// Sends one length-prefixed query on a stream (TCP or TLS) and reads the answer.
+pub async fn stream_exchange<S>(stream: &mut S, bytes: &[u8], query: &Message) -> Result<Message>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let len = u16::try_from(bytes.len()).context("query too large")?;
+    let mut frame = Vec::with_capacity(bytes.len() + 2);
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(bytes);
+    stream.write_all(&frame).await?;
+    stream.flush().await?;
+
+    let len = stream.read_u16().await? as usize;
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await?;
+    let response = Message::from_vec(&buf)?;
+    if !is_response_to(&response, query) {
+        bail!("upstream answer does not match the query");
+    }
+    Ok(response)
+}
