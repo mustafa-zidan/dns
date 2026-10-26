@@ -26,6 +26,20 @@ dig @127.0.0.1 -p 5353 example.com
 
 `DNS_LOG=dns=debug` logs each blocked name, cache hit and upstream failure.
 
+### Dashboard
+
+The dashboard in `web/` is a React and TypeScript app built with Vite. You need Node 24.
+
+```sh
+cd web
+npm ci
+npm run typecheck
+npm test
+npm run dev   # http://localhost:5173
+```
+
+In development it calls the API at `http://127.0.0.1:8053` (set in `web/public/config.json`), so add `"http://localhost:5173"` to `api.cors_origins` in your local config. Write server data only as React text, never with `dangerouslySetInnerHTML`: domain names come from whoever can query the resolver.
+
 ## Pull requests
 
 - Keep each PR to one change, and explain why it is needed, not only what it does.

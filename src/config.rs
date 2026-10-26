@@ -146,8 +146,9 @@ pub struct ApiConfig {
     pub listen: SocketAddr,
     /// When set, every API request must send `Authorization: Bearer <token>`.
     pub token: Option<String>,
-    /// Serve the web dashboard at `/` on the API address.
-    pub dashboard: bool,
+    /// Web origins allowed to call the API from a browser, such as the
+    /// dashboard's address (`http://localhost:8080`). Empty allows none.
+    pub cors_origins: Vec<String>,
 }
 
 impl Default for ApiConfig {
@@ -156,7 +157,7 @@ impl Default for ApiConfig {
             enabled: true,
             listen: "127.0.0.1:8053".parse().unwrap(),
             token: None,
-            dashboard: true,
+            cors_origins: Vec::new(),
         }
     }
 }
@@ -188,7 +189,7 @@ impl Config {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let config: Config = toml::from_str(text)?;
+        let mut config: Config = toml::from_str(text)?;
         anyhow::ensure!(!config.server.listen.is_empty(), "server.listen is empty");
         anyhow::ensure!(
             !config.upstream.servers.is_empty(),
@@ -198,13 +199,65 @@ impl Config {
             config.api.token.as_deref() != Some(""),
             "api.token is empty; remove it or set a value"
         );
+        for origin in &mut config.api.cors_origins {
+            *origin = parse_origin(origin)
+                .with_context(|| format!("api.cors_origins: {origin:?} is not a web origin"))?;
+        }
         Ok(config)
     }
+}
+
+/// Normalizes a web origin such as `https://dash.example:8443`, rejecting
+/// wildcards and anything with a path, query or credentials.
+fn parse_origin(origin: &str) -> Result<String> {
+    let url = url::Url::parse(origin)?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "scheme must be http or https"
+    );
+    anyhow::ensure!(
+        url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none(),
+        "expected only scheme, host and port"
+    );
+    Ok(url.origin().ascii_serialization())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_configs_parse() {
+        for text in [
+            include_str!("../config/dns.toml"),
+            include_str!("../examples/compose/dns.toml"),
+        ] {
+            Config::parse(text).unwrap();
+        }
+    }
+
+    #[test]
+    fn normalizes_cors_origins() {
+        let config = Config::parse(
+            r#"
+            [api]
+            cors_origins = ["http://LOCALHOST:8080/", "https://dash.example:443"]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.api.cors_origins,
+            ["http://localhost:8080", "https://dash.example"]
+        );
+        for bad in ["*", "localhost:8080", "http://x.test/path", "ftp://x.test"] {
+            let text = format!("[api]\ncors_origins = [{bad:?}]");
+            assert!(Config::parse(&text).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn empty_config_uses_defaults() {

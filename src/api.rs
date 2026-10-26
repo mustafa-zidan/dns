@@ -12,8 +12,8 @@
 //! | GET    | `/api/cache`            | Number of cached answers                       |
 //! | DELETE | `/api/cache`            | Empty the cache                                |
 //!
-//! The web dashboard is served at `/` from the same address, unless
-//! `api.dashboard` is off.
+//! The web dashboard is a separate app (see `web/`) that calls this API from
+//! the origins listed in `api.cors_origins`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -21,13 +21,14 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
 use crate::blocklist::{Blocklist, SourceStatus, Verdict};
@@ -43,7 +44,9 @@ pub struct ApiState {
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
     pub token: Option<Arc<str>>,
-    pub dashboard: bool,
+    /// Normalized origins (`scheme://host[:port]`) allowed to call the API
+    /// from a browser.
+    pub cors_origins: Arc<[String]>,
 }
 
 /// Binds the API and serves it until the listener fails.
@@ -67,50 +70,38 @@ pub fn router(state: ApiState) -> Router {
         .route("/check", get(check))
         .route("/cache", get(get_cache).delete(clear_cache))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
-    let mut router = Router::new()
+    let router = Router::new()
         .route("/api/health", get(|| async { "ok" }))
-        .nest("/api", api);
-    if state.dashboard {
-        router = router
-            .route(
-                "/",
-                get(|| async { asset(INDEX_HTML, "text/html; charset=utf-8") }),
-            )
-            .route(
-                "/app.js",
-                get(|| async { asset(APP_JS, "text/javascript; charset=utf-8") }),
-            )
-            .route(
-                "/app.css",
-                get(|| async { asset(APP_CSS, "text/css; charset=utf-8") }),
-            );
-    }
-    router
+        .nest("/api", api)
         .layer(middleware::from_fn_with_state(state.clone(), guard_browser))
-        .layer(middleware::from_fn(security_headers))
-        .with_state(state)
+        .layer(middleware::from_fn(security_headers));
+    // Outermost, so preflight requests are answered before the token check.
+    let router = match cors(&state.cors_origins) {
+        Some(cors) => router.layer(cors),
+        None => router,
+    };
+    router.with_state(state)
 }
 
-const INDEX_HTML: &str = include_str!("ui/index.html");
-const APP_JS: &str = include_str!("ui/app.js");
-const APP_CSS: &str = include_str!("ui/app.css");
-
-/// The dashboard loads nothing from other origins, so the policy allows only
-/// its own script, stylesheet and API calls.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
-    style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; \
-    form-action 'none'; frame-ancestors 'none'";
-
-fn asset(body: &'static str, content_type: &'static str) -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        body,
+fn cors(origins: &[String]) -> Option<CorsLayer> {
+    if origins.is_empty() {
+        return None;
+    }
+    let origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    Some(
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::PUT, Method::POST, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+            .max_age(Duration::from_secs(600)),
     )
-        .into_response()
 }
+
+/// The API only returns JSON, so nothing it sends may run, load or be framed.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; frame-ancestors 'none'";
 
 async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
@@ -128,8 +119,10 @@ async fn security_headers(request: Request, next: Next) -> Response {
 
 /// Stops other web pages from driving the API through the visitor's browser.
 ///
-/// A request with an `Origin` must come from the API's own origin, which
-/// blocks cross-site form posts. Without a token, the `Host` must also be an
+/// A request with an `Origin` must come from the API's own origin or one in
+/// `api.cors_origins`, which blocks cross-site form posts (CORS alone only
+/// hides the response, it does not stop the request). Without a token, the
+/// `Host` must also be an
 /// IP address or `localhost`: a page on a hostile domain that it re-points at
 /// 127.0.0.1 (DNS rebinding) still sends its own name as the host.
 async fn guard_browser(State(state): State<ApiState>, request: Request, next: Next) -> Response {
@@ -138,21 +131,24 @@ async fn guard_browser(State(state): State<ApiState>, request: Request, next: Ne
     if state.token.is_none() && !host.is_some_and(is_ip_or_localhost) {
         return (StatusCode::FORBIDDEN, "set api.token to use a hostname").into_response();
     }
-    if !same_origin(headers, host) {
+    if !allowed_origin(headers, host, &state.cors_origins) {
         return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
     }
     next.run(request).await
 }
 
-fn same_origin(headers: &HeaderMap, host: Option<&str>) -> bool {
+fn allowed_origin(headers: &HeaderMap, host: Option<&str>, allowed: &[String]) -> bool {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return true;
     };
     let origin = origin.to_str().unwrap_or_default();
-    let origin = origin
+    if allowed.iter().any(|allowed| allowed == origin) {
+        return true;
+    }
+    let authority = origin
         .strip_prefix("http://")
         .or_else(|| origin.strip_prefix("https://"));
-    origin.is_some() && origin == host
+    authority.is_some() && authority == host
 }
 
 /// Whether a `Host` header value, with or without a port, names an IP
@@ -363,9 +359,20 @@ mod tests {
             headers
         };
         let host = Some("127.0.0.1:8053");
-        assert!(same_origin(&HeaderMap::new(), host));
-        assert!(same_origin(&with("http://127.0.0.1:8053"), host));
-        assert!(!same_origin(&with("http://evil.example"), host));
-        assert!(!same_origin(&with("null"), host));
+        let allowed = ["http://localhost:8080".to_string()];
+        assert!(allowed_origin(&HeaderMap::new(), host, &[]));
+        assert!(allowed_origin(&with("http://127.0.0.1:8053"), host, &[]));
+        assert!(allowed_origin(
+            &with("http://localhost:8080"),
+            host,
+            &allowed
+        ));
+        assert!(!allowed_origin(&with("http://localhost:8080"), host, &[]));
+        assert!(!allowed_origin(
+            &with("http://evil.example"),
+            host,
+            &allowed
+        ));
+        assert!(!allowed_origin(&with("null"), host, &allowed));
     }
 }

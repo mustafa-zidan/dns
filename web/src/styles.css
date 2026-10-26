@@ -48,8 +48,7 @@ h2 { font-size: 1rem; margin-bottom: .75rem; }
 .actions { margin-left: auto; display: flex; gap: .5rem; flex-wrap: wrap; }
 
 main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
-#content { display: grid; gap: 16px; }
-#content[hidden], [hidden] { display: none !important; }
+main > .content { display: grid; gap: 16px; }
 
 .card {
   background: var(--card);
@@ -102,7 +101,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 .ranks li > * { position: relative; z-index: 1; }
 .ranks .name { overflow-wrap: anywhere; }
 .ranks .count { font-variant-numeric: tabular-nums; color: var(--muted); }
-.empty { color: var(--muted); }
+.empty { color: var(--muted); margin: 0; }
 
 .verdict { margin: .75rem 0 0; min-height: 1.4em; }
 .verdict.blocked { color: var(--block); }
@@ -126,3 +125,10 @@ td.source { overflow-wrap: anywhere; }
   margin: 0; padding: .6rem .8rem; border-radius: 8px;
   border: 1px solid var(--block); color: var(--block); background: var(--card);
 }
+
+.footer { margin: 0; font-size: .85rem; }
+button.link {
+  background: none; border: 0; padding: 0; color: var(--accent);
+  font-weight: 500; text-decoration: underline; cursor: pointer;
+}
+code { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }

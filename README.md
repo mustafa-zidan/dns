@@ -57,11 +57,36 @@ Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.
 
 ## Dashboard
 
-The API address also serves a web dashboard: open <http://127.0.0.1:8053/>. It shows query counts, the top queried and blocked domains, and the state of each blocklist. From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats. It refreshes every 5 seconds and loads nothing from other sites.
+The dashboard is a separate web app in [`web/`](web/), published as its own image, `ghcr.io/mustafa-zidan/dns-dashboard`. It calls the server's API from the browser. It shows:
+
+- query counts and the share that was blocked
+- the top queried and top blocked domains
+- the state of each blocklist
+
+From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats.
 
 ![Dashboard](docs/dashboard.png)
 
-If `api.token` is set, the dashboard asks for it once and keeps it for that browser tab only. To reach it from another machine or from outside a Docker container, set `api.listen = "0.0.0.0:8053"` and a token, and publish the port (`-p 8053:8053`). Set `api.dashboard = false` to serve only the JSON API.
+The quickest way to run both is the [compose example](examples/compose/): set a token in `dns.toml`, run `docker compose up -d`, and open <http://localhost:8080>.
+
+To run the dashboard on its own, tell it where the browser reaches the API:
+
+```sh
+docker run -d --name dns-dashboard -p 8080:8080 \
+  -e DNS_API_URL=http://localhost:8053 \
+  ghcr.io/mustafa-zidan/dns-dashboard:latest
+```
+
+On the server, add the dashboard's address to `api.cors_origins` and set `api.token`:
+
+```toml
+[api]
+listen = "0.0.0.0:8053"
+token = "change-me"
+cors_origins = ["http://localhost:8080"]
+```
+
+Leave `DNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
 
 ## HTTP API
 
@@ -87,7 +112,7 @@ curl -s -X PUT localhost:8053/api/blocking -H 'content-type: application/json' \
 
 Stats live in memory only and reset on restart. Set `stats.top_domains = false` to keep no per-domain counts at all.
 
-Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address, and without a token the `Host` must be an IP address or `localhost`, which stops DNS rebinding. Without a token, use the API by IP address or `localhost`, not by a hostname.
+Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address or from one listed in `api.cors_origins`. Without a token, the `Host` must also be an IP address or `localhost`, which stops DNS rebinding. So without a token, reach the API by IP address or `localhost`, not by a hostname.
 
 ## Roadmap
 

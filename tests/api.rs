@@ -23,10 +23,10 @@ struct Fixture {
 }
 
 async fn start(token: Option<&str>) -> Fixture {
-    start_with(token, true).await
+    start_with(token, &[]).await
 }
 
-async fn start_with(token: Option<&str>, dashboard: bool) -> Fixture {
+async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
     let blocking = BlockingConfig {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
@@ -54,7 +54,7 @@ async fn start_with(token: Option<&str>, dashboard: bool) -> Fixture {
         cache,
         stats,
         token: token.map(Arc::from),
-        dashboard,
+        cors_origins: cors_origins.iter().map(|o| o.to_string()).collect(),
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -228,34 +228,60 @@ async fn reports_and_clears_cache() {
 }
 
 #[tokio::test]
-async fn serves_dashboard_with_strict_headers() {
-    let api = start(None).await;
-    let page = api.http.get(&api.base).send().await.unwrap();
-    assert_eq!(page.status(), 200);
-    let csp = page.headers()["content-security-policy"].to_str().unwrap();
-    assert!(csp.contains("default-src 'none'") && csp.contains("script-src 'self'"));
-    assert_eq!(page.headers()["x-frame-options"], "DENY");
-    assert!(page.text().await.unwrap().contains("app.js"));
+async fn allows_configured_dashboard_origins() {
+    const DASHBOARD: &str = "http://localhost:8080";
+    let api = start_with(Some("s3cret"), &[DASHBOARD]).await;
+    let url = format!("{}/api/blocking", api.base);
 
-    for (path, kind) in [("/app.js", "text/javascript"), ("/app.css", "text/css")] {
-        let asset = api
-            .http
-            .get(format!("{}{path}", api.base))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(asset.status(), 200, "{path}");
-        assert!(
-            asset.headers()["content-type"]
-                .to_str()
-                .unwrap()
-                .starts_with(kind)
-        );
-    }
+    // The browser's preflight carries no token and must still succeed.
+    let preflight = api
+        .http
+        .request(reqwest::Method::OPTIONS, &url)
+        .header("origin", DASHBOARD)
+        .header("access-control-request-method", "PUT")
+        .header(
+            "access-control-request-headers",
+            "authorization,content-type",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(preflight.status().is_success(), "{}", preflight.status());
+    assert_eq!(
+        preflight.headers()["access-control-allow-origin"],
+        DASHBOARD
+    );
+    let allowed = preflight.headers()["access-control-allow-methods"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(allowed.contains("PUT"), "{allowed}");
 
-    let off = start_with(None, false).await;
-    let page = off.http.get(&off.base).send().await.unwrap();
-    assert_eq!(page.status(), 404);
+    let response = api
+        .http
+        .get(&url)
+        .header("origin", DASHBOARD)
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["access-control-allow-origin"], DASHBOARD);
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "default-src 'none'; frame-ancestors 'none'"
+    );
+
+    let other = api
+        .http
+        .get(&url)
+        .header("origin", "http://localhost:9999")
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other.status(), 403);
+    assert!(other.headers().get("access-control-allow-origin").is_none());
 }
 
 #[tokio::test]

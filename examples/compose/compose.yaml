@@ -1,0 +1,28 @@
+# Runs the DNS server and its dashboard together.
+#
+#   1. Set api.token in dns.toml.
+#   2. docker compose up -d
+#   3. Point your devices at this machine for DNS and open http://localhost:8080.
+#
+# The browser calls the API directly, so both ports are published on loopback
+# only. To open the dashboard from other machines, publish them on the LAN
+# address and replace localhost in DNS_API_URL and api.cors_origins with it.
+services:
+  dns:
+    image: ghcr.io/mustafa-zidan/dns:latest
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "127.0.0.1:8053:8053"
+    volumes:
+      - ./dns.toml:/etc/dns/dns.toml:ro
+
+  dashboard:
+    image: ghcr.io/mustafa-zidan/dns-dashboard:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # The API as the browser reaches it, not as the container does.
+      DNS_API_URL: http://localhost:8053
