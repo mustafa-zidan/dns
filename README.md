@@ -1,5 +1,12 @@
 # dns
 
+[![CI](https://github.com/mustafa-zidan/dns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/dns/actions/workflows/ci.yml)
+[![Docker image](https://github.com/mustafa-zidan/dns/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/dns/actions/workflows/docker.yml)
+[![GHCR](https://img.shields.io/badge/ghcr.io-mustafa--zidan%2Fdns-blue?logo=docker&logoColor=white)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
+[![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
+[![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![DoT / DoH](https://img.shields.io/badge/upstreams-DoT%20%7C%20DoH-success)](#features)
+
 A DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
 
 It sits between your devices and an upstream resolver. Queries for domains on your blocklists never leave your network; everything else is forwarded upstream and cached.
