@@ -75,7 +75,7 @@ async fn serve_udp(socket: Arc<UdpSocket>, handler: Arc<Handler>) -> Result<()> 
         let socket = Arc::clone(&socket);
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            let Some(response) = handler.handle_bytes(&request).await else {
+            let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
                 return;
             };
             let Some(bytes) = encode_udp(&response, client_max_payload(&request)) else {
@@ -148,7 +148,7 @@ async fn serve_tcp(listener: TcpListener, handler: Arc<Handler>, idle: Duration)
         let (stream, peer) = listener.accept().await?;
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            if let Err(e) = serve_stream(stream, handler, idle, false).await {
+            if let Err(e) = serve_stream(stream, peer, handler, idle, false).await {
                 debug!(%peer, error = %e, "TCP connection closed");
             }
         });
@@ -173,7 +173,7 @@ async fn serve_dot_listener(
                 Ok(Err(e)) => return debug!(%peer, error = %e, "DoT handshake failed"),
                 Err(_) => return debug!(%peer, "DoT handshake timed out"),
             };
-            if let Err(e) = serve_stream(stream, handler, idle, true).await {
+            if let Err(e) = serve_stream(stream, peer, handler, idle, true).await {
                 debug!(%peer, error = %e, "DoT connection closed");
             }
         });
@@ -185,6 +185,7 @@ async fn serve_dot_listener(
 /// are padded for clients that pad their queries.
 async fn serve_stream<S>(
     mut stream: S,
+    peer: SocketAddr,
     handler: Arc<Handler>,
     idle: Duration,
     encrypted: bool,
@@ -201,7 +202,7 @@ where
         let mut request = vec![0u8; len];
         timeout(idle, stream.read_exact(&mut request)).await??;
 
-        let Some(response) = handler.handle_bytes(&request).await else {
+        let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
             return Ok(());
         };
         let bytes = if encrypted {

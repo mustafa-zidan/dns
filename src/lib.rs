@@ -4,6 +4,7 @@ pub mod api;
 pub mod blocklist;
 pub mod cache;
 pub mod certs;
+pub mod clients;
 pub mod config;
 pub mod doh;
 pub mod handler;

@@ -1,8 +1,9 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use ipnet::IpNet;
 use serde::Deserialize;
 
 use crate::upstream::UpstreamAddr;
@@ -17,6 +18,8 @@ pub struct Config {
     pub blocking: BlockingConfig,
     pub api: ApiConfig,
     pub stats: StatsConfig,
+    /// Rules for specific devices or networks, picked by source address.
+    pub clients: Vec<ClientConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,6 +180,52 @@ impl Default for BlockingConfig {
     }
 }
 
+/// A group of clients, matched by source address, with its own rules.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientConfig {
+    /// Shown in logs and API answers.
+    pub name: String,
+    /// IP addresses (`192.168.1.20`) and networks (`192.168.1.64/28`). When a
+    /// client matches several groups, the most specific network wins.
+    #[serde(deserialize_with = "deserialize_nets")]
+    pub addresses: Vec<IpNet>,
+    /// Apply the shared `[blocking]` lists, denylist and allowlist.
+    #[serde(default = "default_true")]
+    pub blocklists: bool,
+    /// Domains blocked for these clients only (subdomains included).
+    #[serde(default)]
+    pub denylist: Vec<String>,
+    /// Domains never blocked for these clients (subdomains included). Wins
+    /// over this group's denylist and over the shared lists.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Accepts plain addresses as single-host networks.
+fn deserialize_nets<'de, D>(deserializer: D) -> Result<Vec<IpNet>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer)?
+        .iter()
+        .map(|text| parse_net(text).map_err(serde::de::Error::custom))
+        .collect()
+}
+
+fn parse_net(text: &str) -> Result<IpNet, String> {
+    if let Ok(ip) = text.parse::<IpAddr>() {
+        return Ok(IpNet::from(ip));
+    }
+    text.parse::<IpNet>()
+        .map(|net| net.trunc())
+        .map_err(|_| format!("{text:?} is not an IP address or network"))
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ApiConfig {
@@ -252,6 +301,20 @@ impl Config {
             config.tls.reload_interval_secs > 0,
             "tls.reload_interval_secs must be positive"
         );
+        let mut names = std::collections::HashSet::new();
+        for client in &config.clients {
+            anyhow::ensure!(!client.name.trim().is_empty(), "clients: name is empty");
+            anyhow::ensure!(
+                names.insert(client.name.as_str()),
+                "clients: {:?} is listed twice",
+                client.name
+            );
+            anyhow::ensure!(
+                !client.addresses.is_empty(),
+                "clients: {:?} has no addresses",
+                client.name
+            );
+        }
         for origin in &mut config.api.cors_origins {
             *origin = parse_origin(origin)
                 .with_context(|| format!("api.cors_origins: {origin:?} is not a web origin"))?;

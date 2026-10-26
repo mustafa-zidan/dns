@@ -6,9 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use axum::Extension;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -91,7 +92,8 @@ async fn serve_listener(
     loop {
         let (stream, peer) = listener.accept().await?;
         let tls = tls.clone();
-        let service = TowerToHyperService::new(router.clone());
+        // Handlers see the client's address, for per-client rules.
+        let service = TowerToHyperService::new(router.clone().layer(Extension(ConnectInfo(peer))));
         tokio::spawn(async move {
             let stream = match timeout(idle, tls.accept(stream)).await {
                 Ok(Ok(stream)) => stream,
@@ -125,11 +127,12 @@ struct GetParams {
 
 async fn query_get(
     State(handler): State<Arc<Handler>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(params): Query<GetParams>,
 ) -> Response {
     // RFC 8484 uses unpadded base64url, but accept padding from lenient clients.
     match URL_SAFE_NO_PAD.decode(params.dns.trim_end_matches('=')) {
-        Ok(request) if request.len() <= MAX_MESSAGE => answer(&handler, &request).await,
+        Ok(request) if request.len() <= MAX_MESSAGE => answer(&handler, peer, &request).await,
         Ok(_) => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => (StatusCode::BAD_REQUEST, "dns is not base64url").into_response(),
     }
@@ -137,6 +140,7 @@ async fn query_get(
 
 async fn query_post(
     State(handler): State<Arc<Handler>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -146,14 +150,14 @@ async fn query_post(
     if content_type != Some(DNS_MESSAGE) {
         return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
     }
-    answer(&handler, &body).await
+    answer(&handler, peer, &body).await
 }
 
-async fn answer(handler: &Handler, request: &[u8]) -> Response {
+async fn answer(handler: &Handler, peer: SocketAddr, request: &[u8]) -> Response {
     if Message::from_vec(request).is_err() {
         return (StatusCode::BAD_REQUEST, "not a DNS message").into_response();
     }
-    let Some(response) = handler.handle_bytes(request).await else {
+    let Some(response) = handler.handle_bytes(request, peer.ip()).await else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let Some(bytes) = encode_encrypted(request, &response) else {

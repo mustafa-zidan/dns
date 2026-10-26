@@ -21,6 +21,7 @@ It sits between your devices and an upstream resolver. Queries for domains on yo
 - TTL-aware cache with min/max TTL clamping and RFC 2308 negative caching.
 - Blocklists from URLs or files, refreshed on a schedule. Hosts files, plain domain lists and adblock-style `||domain^` / `@@||domain^` rules are understood. A rule blocks the domain and all its subdomains.
 - Inline denylist and allowlist. The allowlist always wins.
+- Per-client rules: give a device or network its own denylist and allowlist, or let it skip the shared blocklists.
 - Blocked names answered with NXDOMAIN, `0.0.0.0` / `::`, or REFUSED.
 - Privacy: queries sent upstream get a fresh random ID and source port and carry none of the client's EDNS options, so EDNS Client Subnet never leaks your network. Encrypted queries are padded to 128-byte blocks (RFC 8467) so their size doesn't reveal the name. DoH requests send no User-Agent. Nothing is logged per query unless you turn on debug logging.
 
@@ -116,6 +117,27 @@ cors_origins = ["http://localhost:8080"]
 
 Leave `DNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
 
+## Per-client rules
+
+Groups in `[[clients]]` match queries by source address and change what gets blocked for them:
+
+```toml
+[[clients]]
+name = "kids"
+addresses = ["192.168.1.20", "192.168.1.64/28"]
+denylist = ["youtube.com", "tiktok.com"]
+
+[[clients]]
+name = "work-laptop"
+addresses = ["192.168.1.30", "fd00::30"]
+blocklists = false   # skip the shared lists; this group's own rules still apply
+allowlist = []
+```
+
+For a query from a group's address, the group's allowlist is checked first, then its denylist, then the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins. Turning blocking off or pausing it through the API turns off client rules too. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
+
+The server sees the address the query arrives from. Behind NAT or a DNS proxy, every device looks like that box. In Docker, the published UDP and TCP ports usually keep client addresses, but if every query appears to come from the Docker gateway, run the container with `--network host`.
+
 ## HTTP API
 
 The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
@@ -128,7 +150,7 @@ The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.tok
 | GET | `/api/blocking` | Whether blocking is active, rule counts, last reload and per-list status |
 | PUT | `/api/blocking` | `{"enabled": false}` turns blocking off, `{"enabled": false, "pause_secs": 300}` pauses it for 5 minutes, `{"enabled": true}` turns it back on |
 | POST | `/api/blocking/reload` | Re-download the blocklists now |
-| GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule |
+| GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule. Add `&client=<ip>` to apply that client's group |
 | GET | `/api/cache` | Number of cached answers |
 | DELETE | `/api/cache` | Empty the cache |
 
@@ -144,7 +166,8 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Per-client rules.
+- Per-client blocklist URLs and schedules, such as bedtime rules.
+- Managing client groups from the dashboard.
 
 ## Development
 

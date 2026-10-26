@@ -11,7 +11,8 @@ use tokio::net::TcpListener;
 use dns::api::{ApiState, router};
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
-use dns::config::{BlockingConfig, CacheConfig, StatsConfig, UpstreamConfig};
+use dns::clients::Clients;
+use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
 use dns::handler::Handler;
 use dns::stats::Stats;
 use dns::upstream::Upstreams;
@@ -51,6 +52,13 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
 
     let state = ApiState {
         blocklist,
+        clients: Arc::new(Clients::new(
+            &Config::parse(
+                "[[clients]]\nname = \"kids\"\naddresses = [\"192.168.1.0/24\"]\ndenylist = [\"video.example\"]",
+            )
+            .unwrap()
+            .clients,
+        )),
         cache,
         stats,
         token: token.map(Arc::from),
@@ -66,6 +74,8 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
         handler,
     }
 }
+
+const LOCAL: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
 fn query(name: &str) -> Message {
     let mut msg = Message::new(7, MessageType::Query, OpCode::Query);
@@ -102,9 +112,11 @@ impl Fixture {
 #[tokio::test]
 async fn reports_query_stats() {
     let api = start(None).await;
-    api.handler.handle(&query("ads.example.com.")).await;
-    api.handler.handle(&query("x.ads.example.com.")).await;
-    api.handler.handle(&query("example.org.")).await;
+    api.handler.handle(&query("ads.example.com."), LOCAL).await;
+    api.handler
+        .handle(&query("x.ads.example.com."), LOCAL)
+        .await;
+    api.handler.handle(&query("example.org."), LOCAL).await;
 
     let stats = api.get("/api/stats?top=5").await;
     assert_eq!(stats["queries"]["total"], 3);
@@ -131,7 +143,7 @@ async fn toggles_and_pauses_blocking() {
     let off = api.put("/api/blocking", json!({"enabled": false})).await;
     assert_eq!(off.status(), 200);
     assert_eq!(off.json::<Value>().await.unwrap()["active"], false);
-    let response = api.handler.handle(&query("ads.example.com.")).await;
+    let response = api.handler.handle(&query("ads.example.com."), LOCAL).await;
     assert_ne!(
         response.response_code,
         hickory_proto::op::ResponseCode::NXDomain
@@ -170,6 +182,16 @@ async fn checks_names_and_reports_rules() {
 
     let miss = api.get("/api/check?name=example.org").await;
     assert_eq!(miss["blocked"], false);
+    assert_eq!(miss["client"], Value::Null);
+
+    let shared = api.get("/api/check?name=video.example").await;
+    assert_eq!(shared["blocked"], false);
+    let kids = api
+        .get("/api/check?name=video.example&client=192.168.1.20")
+        .await;
+    assert_eq!(kids["blocked"], true);
+    assert_eq!(kids["rule"], "video.example");
+    assert_eq!(kids["client"], "kids");
 
     let blocking = api.get("/api/blocking").await;
     assert_eq!(blocking["blocked_domains"], 1);

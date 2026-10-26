@@ -20,7 +20,8 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
 use dns::certs::CertStore;
-use dns::config::{BlockingConfig, CacheConfig, StatsConfig, UpstreamConfig};
+use dns::clients::Clients;
+use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
 use dns::handler::Handler;
 use dns::stats::Stats;
 use dns::upstream::{UpstreamAddr, Upstreams};
@@ -121,17 +122,35 @@ async fn handler() -> Arc<Handler> {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
     };
-    Arc::new(Handler::new(
-        Arc::new(Blocklist::new(blocking.clone()).unwrap()),
-        &blocking,
-        Arc::new(Cache::new(CacheConfig::default())),
-        Upstreams::new(&UpstreamConfig {
-            servers: vec![UpstreamAddr::Udp(fake_upstream().await)],
-            ..UpstreamConfig::default()
-        })
-        .unwrap(),
-        Arc::new(Stats::new(&StatsConfig::default())),
-    ))
+    Arc::new(
+        Handler::new(
+            Arc::new(Blocklist::new(blocking.clone()).unwrap()),
+            &blocking,
+            Arc::new(Cache::new(CacheConfig::default())),
+            Upstreams::new(&UpstreamConfig {
+                servers: vec![UpstreamAddr::Udp(fake_upstream().await)],
+                ..UpstreamConfig::default()
+            })
+            .unwrap(),
+            Arc::new(Stats::new(&StatsConfig::default())),
+        )
+        .with_clients(loopback_client()),
+    )
+}
+
+/// Per-client rules for this machine, to check the listeners pass on the
+/// client's address.
+fn loopback_client() -> Arc<Clients> {
+    let config = Config::parse(
+        r#"
+        [[clients]]
+        name = "loopback"
+        addresses = ["127.0.0.1", "::1"]
+        denylist = ["video.example"]
+        "#,
+    )
+    .unwrap();
+    Arc::new(Clients::new(&config.clients))
 }
 
 async fn start_dot(store: &Arc<CertStore>) -> SocketAddr {
@@ -211,6 +230,8 @@ async fn dot_answers_and_blocks() {
     assert_eq!(first_a(&response), ANSWER);
     let blocked = client.resolve(&query("x.ads.example.com.")).await.unwrap();
     assert_eq!(blocked.response_code, ResponseCode::NXDomain);
+    let per_client = client.resolve(&query("video.example.")).await.unwrap();
+    assert_eq!(per_client.response_code, ResponseCode::NXDomain);
 }
 
 #[tokio::test]
@@ -270,6 +291,17 @@ async fn doh_answers_get_and_post_over_http2() {
         .unwrap();
     assert_eq!(post.status(), 200);
     let answer = Message::from_vec(&post.bytes().await.unwrap()).unwrap();
+    assert_eq!(answer.response_code, ResponseCode::NXDomain);
+
+    let per_client = client
+        .get(format!(
+            "{url}?dns={}",
+            URL_SAFE_NO_PAD.encode(query("video.example.").to_vec().unwrap())
+        ))
+        .send()
+        .await
+        .unwrap();
+    let answer = Message::from_vec(&per_client.bytes().await.unwrap()).unwrap();
     assert_eq!(answer.response_code, ResponseCode::NXDomain);
 }
 

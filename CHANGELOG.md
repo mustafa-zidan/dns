@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - UDP and TCP DNS server forwarding to upstream resolvers with failover and a TTL-aware cache.
 - Blocklists from URLs or files (hosts files, plain domain lists, adblock `||domain^` rules), refreshed on a schedule, with inline deny and allow lists.
 - DNS-over-TLS and DNS-over-HTTPS upstreams, bootstrap resolution for their hostnames, and EDNS(0) padding of encrypted queries.
+- Per-client rules (`[[clients]]`): groups of addresses and networks with their own denylist and allowlist, optionally skipping the shared blocklists. `/api/check` takes a `client` address.
 - DNS-over-TLS and DNS-over-HTTPS listeners for clients (`[tls]`), with HTTP/2, GET and POST, response padding for padded queries, and certificate reload on renewal.
 - Upstream queries over TCP, DNS-over-TLS and DNS-over-HTTPS retry once on a fresh connection when the server hangs up before answering.
 - HTTP API (`127.0.0.1:8053`, optional bearer token) with query stats, top queried and blocked domains, a blocking on/off/pause switch, blocklist reload and status, a name checker, and cache controls.

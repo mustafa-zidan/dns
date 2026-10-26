@@ -8,7 +8,8 @@
 //! | GET    | `/api/blocking`         | Blocking state, rule counts, per-list status   |
 //! | PUT    | `/api/blocking`         | `{"enabled": bool, "pause_secs": n}`           |
 //! | POST   | `/api/blocking/reload`  | Re-download the blocklists now                 |
-//! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule   |
+//! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule.  |
+//! |        | `&client=192.168.1.20`  | Optionally, for that client's rules            |
 //! | GET    | `/api/cache`            | Number of cached answers                       |
 //! | DELETE | `/api/cache`            | Empty the cache                                |
 //!
@@ -33,6 +34,7 @@ use tracing::{info, warn};
 
 use crate::blocklist::{Blocklist, SourceStatus, Verdict};
 use crate::cache::Cache;
+use crate::clients::{self, Clients};
 use crate::stats::{Snapshot, Stats};
 
 const DEFAULT_TOP: usize = 10;
@@ -41,6 +43,7 @@ const MAX_TOP: usize = 100;
 #[derive(Clone)]
 pub struct ApiState {
     pub blocklist: Arc<Blocklist>,
+    pub clients: Arc<Clients>,
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
     pub token: Option<Arc<str>>,
@@ -277,6 +280,8 @@ async fn reload_blocking(State(state): State<ApiState>) -> Json<BlockingStatus> 
 #[derive(Deserialize)]
 struct CheckParams {
     name: String,
+    /// Check with the rules of the client group this address belongs to.
+    client: Option<IpAddr>,
 }
 
 #[derive(Serialize)]
@@ -285,6 +290,8 @@ struct CheckResult {
     /// Whether the rules match, regardless of whether blocking is active.
     blocked: bool,
     rule: Option<String>,
+    /// The client group whose rules applied, if any.
+    client: Option<String>,
 }
 
 async fn check(
@@ -296,8 +303,9 @@ async fn check(
         .trim()
         .trim_end_matches('.')
         .to_ascii_lowercase();
+    let group = params.client.and_then(|ip| state.clients.lookup(ip));
     let rules = state.blocklist.rules();
-    let rule = match rules.check(&name) {
+    let rule = match clients::check(&rules, group, &name) {
         Verdict::Blocked(rule) => Some(rule.to_string()),
         Verdict::Allowed => None,
     };
@@ -305,6 +313,7 @@ async fn check(
         blocked: rule.is_some(),
         name,
         rule,
+        client: group.map(|g| g.name.clone()),
     })
 }
 

@@ -57,6 +57,19 @@ allowlist = []
 # Re-download lists this often. 0 disables refreshing.
 refresh_interval_secs = 86400
 
+# Rules for specific devices or networks, matched by source address. Repeat
+# the block for each group. (Default: no groups.)
+# [[clients]]
+# name = "kids"
+# # Addresses and networks. The most specific match wins.
+# addresses = ["192.168.1.20", "192.168.1.64/28"]
+# # Apply the shared [blocking] lists too.
+# blocklists = true
+# # Blocked for this group only, subdomains included.
+# denylist = ["youtube.com"]
+# # Never blocked for this group. Wins over everything else.
+# allowlist = []
+
 [api]
 # HTTP API for stats and runtime control (see the README for endpoints).
 enabled = true
