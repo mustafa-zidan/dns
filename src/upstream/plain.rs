@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tracing::debug;
 
-use super::{UpstreamAddr, is_response_to};
+use super::{UpstreamAddr, closed_early, is_response_to};
 
 pub async fn exchange(server: &UpstreamAddr, query: &Message) -> Result<Message> {
     let bytes = query.to_vec()?;
@@ -50,7 +50,14 @@ async fn udp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result
 
 async fn tcp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result<Message> {
     let mut stream = TcpStream::connect(addr).await?;
-    stream_exchange(&mut stream, bytes, query).await
+    match stream_exchange(&mut stream, bytes, query).await {
+        Err(e) if closed_early(&e) => {
+            debug!(%addr, error = %e, "upstream closed the connection early, retrying once");
+            let mut stream = TcpStream::connect(addr).await?;
+            stream_exchange(&mut stream, bytes, query).await
+        }
+        result => result,
+    }
 }
 
 /// Sends one length-prefixed query on a stream (TCP or TLS) and reads the answer.

@@ -447,6 +447,7 @@ dependencies = [
  "axum",
  "clap",
  "hickory-proto",
+ "hyper",
  "moka",
  "rcgen",
  "reqwest",

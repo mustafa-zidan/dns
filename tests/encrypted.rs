@@ -76,6 +76,12 @@ impl Seen {
 }
 
 async fn dot_server(tls: TlsAcceptor) -> (SocketAddr, Arc<Seen>) {
+    dot_server_dropping(tls, 0).await
+}
+
+/// A DoT server that reads the query on its first `drop_first` connections
+/// and then closes them without answering, as a flaky resolver does.
+async fn dot_server_dropping(tls: TlsAcceptor, drop_first: usize) -> (SocketAddr, Arc<Seen>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Seen::default());
@@ -86,7 +92,14 @@ async fn dot_server(tls: TlsAcceptor) -> (SocketAddr, Arc<Seen>) {
             let Ok(mut stream) = tls.accept(tcp).await else {
                 continue;
             };
-            state.connections.fetch_add(1, Ordering::SeqCst);
+            let n = state.connections.fetch_add(1, Ordering::SeqCst);
+            if n < drop_first {
+                let len = stream.read_u16().await.unwrap();
+                let mut buf = vec![0u8; len as usize];
+                stream.read_exact(&mut buf).await.unwrap();
+                stream.shutdown().await.ok();
+                continue;
+            }
             let state = Arc::clone(&state);
             tokio::spawn(async move {
                 while let Ok(len) = stream.read_u16().await {
@@ -106,6 +119,12 @@ async fn dot_server(tls: TlsAcceptor) -> (SocketAddr, Arc<Seen>) {
 
 /// A minimal HTTP/1.1 DoH server: reads one POST per connection and answers it.
 async fn doh_server(tls: TlsAcceptor) -> (SocketAddr, Arc<Seen>) {
+    doh_server_dropping(tls, 0).await
+}
+
+/// A DoH server that hangs up without answering on its first `drop_first`
+/// connections.
+async fn doh_server_dropping(tls: TlsAcceptor, drop_first: usize) -> (SocketAddr, Arc<Seen>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Seen::default());
@@ -116,7 +135,14 @@ async fn doh_server(tls: TlsAcceptor) -> (SocketAddr, Arc<Seen>) {
             let Ok(stream) = tls.accept(tcp).await else {
                 continue;
             };
-            state.connections.fetch_add(1, Ordering::SeqCst);
+            let n = state.connections.fetch_add(1, Ordering::SeqCst);
+            if n < drop_first {
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.ok();
+                stream.into_inner().shutdown().await.ok();
+                continue;
+            }
             let state = Arc::clone(&state);
             tokio::spawn(async move {
                 let mut stream = BufReader::new(stream);
@@ -269,4 +295,41 @@ async fn doh_posts_padded_queries_with_id_zero() {
     // A second query reuses the pooled HTTP connection.
     upstreams.resolve(&query("example.com.")).await.unwrap();
     assert_eq!(seen.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn dot_retries_when_a_fresh_connection_is_dropped() {
+    let tls = tls(&[]);
+    let (addr, seen) = dot_server_dropping(tls.acceptor.clone(), 1).await;
+    let upstreams = upstreams(&format!("tls://{addr}#dns.test"), None, &tls);
+
+    let response = upstreams.resolve(&query("example.org.")).await.unwrap();
+    assert_eq!(first_a(&response), ANSWER);
+    assert_eq!(seen.connections.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn dot_gives_up_after_one_retry() {
+    let tls = tls(&[]);
+    let (addr, seen) = dot_server_dropping(tls.acceptor.clone(), 2).await;
+    let upstreams = upstreams(&format!("tls://{addr}#dns.test"), None, &tls);
+
+    assert!(upstreams.resolve(&query("example.org.")).await.is_err());
+    assert_eq!(seen.connections.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn doh_retries_when_the_connection_is_dropped() {
+    let tls = tls(&[b"http/1.1"]);
+    let (addr, seen) = doh_server_dropping(tls.acceptor.clone(), 1).await;
+    let bootstrap = bootstrap_server().await;
+    let upstreams = upstreams(
+        &format!("https://dns.test:{}/dns-query", addr.port()),
+        Some(bootstrap),
+        &tls,
+    );
+
+    let response = upstreams.resolve(&query("example.net.")).await.unwrap();
+    assert_eq!(first_a(&response), ANSWER);
+    assert_eq!(seen.connections.load(Ordering::SeqCst), 2);
 }

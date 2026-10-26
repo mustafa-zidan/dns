@@ -284,6 +284,28 @@ impl Upstreams {
     }
 }
 
+/// Whether an exchange failed because the server closed or reset the
+/// connection before answering. Resolvers do this now and then, for example
+/// when an anycast node restarts, and a fresh connection usually works.
+fn closed_early(error: &anyhow::Error) -> bool {
+    use std::io::ErrorKind;
+    error.chain().any(|cause| {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                ErrorKind::UnexpectedEof
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+            );
+        }
+        // HTTP connections that close mid-request surface as hyper errors.
+        cause
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|e| e.is_incomplete_message() || e.is_canceled())
+    })
+}
+
 /// Serializes a query for an encrypted transport, padded so its length does
 /// not give away which name is being looked up.
 fn encode_padded(query: &Message) -> Result<Vec<u8>> {
