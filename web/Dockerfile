@@ -4,8 +4,9 @@
 FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS build
 WORKDIR /app
 # Corepack fetches the pnpm release pinned, with its hash, in package.json.
+# Node 25 and later no longer bundle Corepack, so it comes from npm.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
+RUN npm install --global --ignore-scripts corepack@0.36.0 && corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
