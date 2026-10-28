@@ -61,6 +61,7 @@ main > .content { display: grid; gap: 16px; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
 .row { display: flex; gap: .5rem; flex-wrap: wrap; }
 .row input { flex: 1 1 12rem; }
+.row input.client { flex: 0 1 11rem; min-width: 0; }
 
 .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .tile {
@@ -119,6 +120,16 @@ td.source { overflow-wrap: anywhere; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .ok { color: var(--accent); }
 .bad { color: var(--block); }
+.groups { list-style: none; margin: 0; padding: 0; }
+.groups li { padding: .75rem 0; border-top: 1px solid var(--line); }
+.groups li:first-child { border-top: 0; padding-top: 0; }
+.group-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem 1rem; flex-wrap: wrap; }
+.group-head .addresses { margin-left: .6rem; overflow-wrap: anywhere; }
+.group-status { display: flex; align-items: center; gap: .75rem; white-space: nowrap; }
+.group-rules, .schedule { margin: .35rem 0 0; font-size: .92rem; }
+.schedule { color: var(--muted); }
+.schedule.open { color: var(--block); }
+.note { color: var(--muted); font-size: .85rem; margin: .75rem 0 0; }
 
 .muted { color: var(--muted); }
 .error {

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { Api, Blocking, CheckResult, DomainCount } from "./api";
+import type { Api, Blocking, CheckResult, ClientGroup, Clients, DomainCount } from "./api";
 import type { Snapshot } from "./App";
-import { count, duration, percent } from "./format";
+import { count, days, duration, percent } from "./format";
 
 // Domain names come from whoever can query the resolver. React escapes text,
 // and nothing here uses dangerouslySetInnerHTML, so they are never parsed as HTML.
@@ -14,7 +14,7 @@ export function Dashboard(props: {
   fail: (e: unknown) => void;
 }) {
   const { api, snapshot, refresh, fail } = props;
-  const { stats, blocking, cache } = snapshot;
+  const { stats, blocking, cache, clients } = snapshot;
   const q = stats.queries;
 
   // Runs an action, then refreshes so every panel shows its effect.
@@ -64,6 +64,10 @@ export function Dashboard(props: {
           </div>
         </Card>
       </section>
+
+      {clients.groups.length > 0 && (
+        <ClientGroups clients={clients} onPause={(name, secs) => act(() => api.pauseClient(name, secs))} />
+      )}
 
       <Blocklists blocking={blocking} onReload={() => act(() => api.reload())} />
     </div>
@@ -132,6 +136,7 @@ function Ranks(props: { items: DomainCount[]; blocked?: boolean }) {
 
 function CheckDomain(props: { api: Api; fail: (e: unknown) => void }) {
   const [name, setName] = useState("");
+  const [client, setClient] = useState("");
   const [result, setResult] = useState<CheckResult | null>(null);
   return (
     <form
@@ -140,7 +145,7 @@ function CheckDomain(props: { api: Api; fail: (e: unknown) => void }) {
         e.preventDefault();
         if (!name.trim()) return;
         try {
-          setResult(await props.api.check(name.trim()));
+          setResult(await props.api.check(name.trim(), client.trim() || undefined));
         } catch (err) {
           props.fail(err);
         }
@@ -158,14 +163,85 @@ function CheckDomain(props: { api: Api; fail: (e: unknown) => void }) {
           onChange={(e) => setName(e.target.value)}
           required
         />
+        <input
+          type="text"
+          className="client"
+          placeholder="Client IP (optional)"
+          aria-label="Client IP address"
+          autoComplete="off"
+          spellCheck={false}
+          inputMode="decimal"
+          value={client}
+          onChange={(e) => setClient(e.target.value)}
+        />
         <button type="submit">Check</button>
       </div>
       <p className={`verdict ${result ? (result.blocked ? "blocked" : "allowed") : ""}`} aria-live="polite">
-        {result &&
-          (result.blocked ? `${result.name} is blocked by ${result.rule}` : `${result.name} is not blocked`)}
+        {result && verdict(result)}
       </p>
     </form>
   );
+}
+
+function verdict(result: CheckResult): string {
+  const forWhom = result.client ? ` for ${result.client}` : "";
+  if (!result.blocked) return `${result.name} is not blocked${forWhom}`;
+  const by = result.rule === "*" ? "a schedule that blocks everything" : result.rule;
+  return `${result.name} is blocked${forWhom} by ${by}`;
+}
+
+const PAUSE_SECS = 3600;
+
+function ClientGroups(props: { clients: Clients; onPause: (name: string, secs: number) => Promise<void> }) {
+  return (
+    <Card title="Client groups">
+      <ul className="groups">
+        {props.clients.groups.map((group) => (
+          <li key={group.name}>
+            <div className="group-head">
+              <div>
+                <strong>{group.name}</strong>
+                <span className="muted addresses">{group.addresses.join(", ")}</span>
+              </div>
+              <div className="group-status">
+                <span className={group.paused_for_secs ? "muted" : "ok"}>
+                  {group.paused_for_secs ? `Paused, ${duration(group.paused_for_secs)} left` : "Active"}
+                </span>
+                {group.paused_for_secs ? (
+                  <ActionButton onClick={() => props.onPause(group.name, 0)}>Resume</ActionButton>
+                ) : (
+                  <ActionButton onClick={() => props.onPause(group.name, PAUSE_SECS)}>Pause 1h</ActionButton>
+                )}
+              </div>
+            </div>
+            <p className="group-rules">{rules(group)}</p>
+            {group.schedules.map((s, i) => (
+              <p key={i} className={s.active ? "schedule open" : "schedule"}>
+                {days(s.days)} {s.from}–{s.to}: {s.block_all ? "block all" : `block ${count(s.denylist)}`}
+                {s.active && " (open now)"}
+              </p>
+            ))}
+          </li>
+        ))}
+      </ul>
+      <p className="note">
+        Times are server time ({props.clients.now.replace("T", " ")} now). A paused group gets only the shared
+        rules.
+      </p>
+    </Card>
+  );
+}
+
+function rules(group: ClientGroup): string {
+  const parts = [
+    group.denylist && `${count(group.denylist)} denied`,
+    group.allowlist && `${count(group.allowlist)} allowed`,
+    group.sources.length && `${count(group.list_domains)} from ${group.sources.length} list${group.sources.length === 1 ? "" : "s"}`,
+    group.blocklists ? "shared lists" : "no shared lists",
+  ];
+  const failed = group.sources.filter((s) => s.error).length;
+  if (failed) parts.push(`${failed} list${failed === 1 ? "" : "s"} failed`);
+  return parts.filter(Boolean).join(" · ");
 }
 
 function Blocklists(props: { blocking: Blocking; onReload: () => Promise<void> }) {

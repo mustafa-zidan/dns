@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { duration, parseApiUrl, percent } from "./format";
+import { days, duration, parseApiUrl, percent } from "./format";
 
 describe("duration", () => {
   it("shows the two largest units", () => {
@@ -33,5 +33,20 @@ describe("parseApiUrl", () => {
     expect(parseApiUrl("127.0.0.1:8053")).toBeNull();
     expect(parseApiUrl("javascript:alert(1)")).toBeNull();
     expect(parseApiUrl("")).toBeNull();
+  });
+});
+
+describe("days", () => {
+  it("collapses runs of days", () => {
+    expect(days(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])).toBe("Every day");
+    expect(days(["mon", "tue", "wed", "thu", "fri"])).toBe("Mon–Fri");
+    expect(days(["sat", "sun"])).toBe("Sat, Sun");
+    expect(days(["wed"])).toBe("Wed");
+    expect(days(["mon", "wed", "fri"])).toBe("Mon, Wed, Fri");
+  });
+
+  it("keeps a run across the weekend together", () => {
+    expect(days(["sun", "mon", "tue", "wed", "thu"])).toBe("Sun–Thu");
+    expect(days(["fri", "sat", "sun", "mon"])).toBe("Fri–Mon");
   });
 });

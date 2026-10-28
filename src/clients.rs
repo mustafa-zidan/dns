@@ -111,7 +111,14 @@ impl Client {
         let list_rules = self.list_rules.load();
         ClientStatus {
             name: self.name.clone(),
-            addresses: self.nets.iter().map(ToString::to_string).collect(),
+            addresses: self
+                .nets
+                .iter()
+                .map(|net| match net.prefix_len() == net.max_prefix_len() {
+                    true => net.addr().to_string(),
+                    false => net.to_string(),
+                })
+                .collect(),
             blocklists: self.blocklists,
             denylist: self.denied.len(),
             allowlist: self.allowed.len(),

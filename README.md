@@ -91,8 +91,9 @@ The dashboard is a separate web app in [`web/`](web/), published as its own imag
 - query counts and the share that was blocked
 - the top queried and top blocked domains
 - the state of each blocklist
+- each client group, with its rules, list status and schedules, and which schedules are open now
 
-From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats.
+From it you can turn blocking off or pause it, pause one client group's rules for an hour, check whether a domain is blocked (optionally for a given client address), reload the lists, clear the cache and reset the stats.
 
 ![Dashboard](docs/dashboard.png)
 
@@ -181,7 +182,8 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Managing client groups from the dashboard.
+- Searchable structured logs (JSON output).
+- A Helm chart for Kubernetes.
 
 ## Development
 
