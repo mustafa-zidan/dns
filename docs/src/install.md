@@ -23,7 +23,7 @@ docker run -d --name hushdns --restart unless-stopped \
 
 The container runs as a non-root user on distroless Debian. It runs in UTC, so set `server.timezone` if you use [schedules](clients.md#schedules).
 
-Tags follow releases: `latest` is the newest build from `main`, `0.0.1` is an exact release, and `0.0` is the newest patch release of that line.
+Tags follow releases: `latest` is the newest build from `main`, `0.0.2` is an exact release, and `0.0` is the newest patch release of that line.
 
 ## Docker Compose, with the dashboard
 
@@ -43,7 +43,7 @@ Then open <http://localhost:8080> and enter the token.
 Every [release](https://github.com/mustafa-zidan/hushdns/releases) has binaries for Linux on `x86_64` and `aarch64`, with a `SHA256SUMS` file:
 
 ```sh
-version=0.0.1
+version=0.0.2
 arch=$(uname -m)   # x86_64 or aarch64
 curl -LO "https://github.com/mustafa-zidan/hushdns/releases/download/v$version/hushdns-$version-$arch-linux.tar.gz"
 curl -LO "https://github.com/mustafa-zidan/hushdns/releases/download/v$version/SHA256SUMS"

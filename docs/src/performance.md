@@ -11,30 +11,30 @@
 | forwarded | A new name every query, so every one goes upstream |
 | mixed | 60% cached, 25% blocked, 15% forwarded, roughly a home network |
 
-## hushdns 0.0.1, the next release, and Technitium 15.6.2
+## hushdns 0.0.1, 0.0.2 and Technitium 15.6.2
 
 | Scenario | Target | Queries/s | p50 | p99 | Timeouts | Peak memory |
 |---|---|---:|---:|---:|---:|---:|
 | cached | hushdns 0.0.1 | 161770 | 381 µs | 784 µs | 0 | 45.8 MiB |
-| cached | hushdns, unreleased | 216574 (+33.9%) | 288 µs (-24.4%) | 597 µs (-23.9%) | 0 | 51.0 MiB |
+| cached | hushdns 0.0.2 | 216574 (+33.9%) | 288 µs (-24.4%) | 597 µs (-23.9%) | 0 | 51.0 MiB |
 | cached | Technitium 15.6.2 | 82393 (-49.1%) | 722 µs (+89.5%) | 2257 µs (+187.9%) | 0 | 259.7 MiB |
 | blocked | hushdns 0.0.1 | 187680 | 326 µs | 669 µs | 0 | 45.8 MiB |
-| blocked | hushdns, unreleased | 244280 (+30.2%) | 257 µs (-21.2%) | 485 µs (-27.5%) | 0 | 51.0 MiB |
+| blocked | hushdns 0.0.2 | 244280 (+30.2%) | 257 µs (-21.2%) | 485 µs (-27.5%) | 0 | 51.0 MiB |
 | blocked | Technitium 15.6.2 | 74526 (-60.3%) | 732 µs (+124.5%) | 2875 µs (+329.7%) | 0 | 376.7 MiB |
 | forwarded | hushdns 0.0.1 | 30107 | 2064 µs | 3824 µs | 0 | 51.7 MiB |
-| forwarded | hushdns, unreleased | 44985 (+49.4%) | 1373 µs (-33.5%) | 2629 µs (-31.2%) | 0 | 51.0 MiB |
+| forwarded | hushdns 0.0.2 | 44985 (+49.4%) | 1373 µs (-33.5%) | 2629 µs (-31.2%) | 0 | 51.0 MiB |
 | forwarded | Technitium 15.6.2 | 11993 (-60.2%) | 3510 µs (+70.1%) | 56.2 ms (+1368.8%) | 0 | 1104.9 MiB |
 | mixed | hushdns 0.0.1 | 88028 | 590 µs | 2332 µs | 0 | 51.9 MiB |
-| mixed | hushdns, unreleased | 125730 (+42.8%) | 421 µs (-28.6%) | 1626 µs (-30.3%) | 0 | 51.0 MiB |
+| mixed | hushdns 0.0.2 | 125730 (+42.8%) | 421 µs (-28.6%) | 1626 µs (-30.3%) | 0 | 51.0 MiB |
 | mixed | Technitium 15.6.2 | 35259 (-59.9%) | 461 µs (-21.9%) | 14.8 ms (+533.9%) | 0 | 1133.4 MiB |
 
 Percent changes are against hushdns 0.0.1. Higher queries per second is better; lower latency is better.
 
 This ran on a 4-CPU Intel Xeon at 2.10 GHz, with the server on two CPUs and the load generator and upstream on the other two. There were 64 queries in flight over UDP, each run lasted 15 seconds after a 5-second warm-up, and each figure is the median of three runs. Peak memory is the highest resident size the server reached up to the end of that scenario. The scenarios run in the order shown, so it only grows.
 
-Since 0.0.1, hushdns answers 30% to 50% more queries, with p99 latency 24% to 31% lower, in every scenario. Against Technitium on this machine, that is 2.6 to 3.8 times the queries, with p99 latency 4 to 21 times lower, in a fifth of the memory or less.
+In 0.0.2, hushdns answers 30% to 50% more queries, with p99 latency 24% to 31% lower, in every scenario. Against Technitium on this machine, that is 2.6 to 3.8 times the queries, with p99 latency 4 to 21 times lower, in a fifth of the memory or less.
 
-### What changed since 0.0.1
+### What changed in 0.0.2
 
 Each change was profiled with `perf` under this benchmark and kept only if it measured better.
 
@@ -50,7 +50,7 @@ Each change was profiled with `perf` under this benchmark and kept only if it me
 
 Blocklist domains are packed end to end in one buffer, and the hash table holds only their positions, so a domain no longer costs its own heap allocation. Lists are also parsed on a blocking thread, so a big list doesn't stall the queries on the worker that loads it. With a 1,000,000-domain list:
 
-| | hushdns 0.0.1 | hushdns, unreleased |
+| | hushdns 0.0.1 | hushdns 0.0.2 |
 |---|---:|---:|
 | Time to load the list | 0.75 s | 0.55 s |
 | Resident memory after loading | 93 MiB | 72 MiB |
