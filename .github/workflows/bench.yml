@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: Baseline ref (default: the latest tag)
+        description: "Baseline ref (default: the latest tag)"
         required: false
       head:
-        description: Ref to compare (default: the branch this runs on)
+        description: "Ref to compare (default: the branch this runs on)"
         required: false
       technitium:
         description: Also benchmark Technitium DNS Server
