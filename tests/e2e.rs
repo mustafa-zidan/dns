@@ -14,7 +14,8 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
-use dns::config::{BlockingConfig, CacheConfig, StatsConfig, UpstreamConfig};
+use dns::clients::Clients;
+use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
 use dns::handler::Handler;
 use dns::server;
 use dns::stats::Stats;
@@ -110,7 +111,11 @@ fn query(id: u16, name: &str) -> Vec<u8> {
 }
 
 async fn ask_udp(server: SocketAddr, id: u16, name: &str) -> Message {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    ask_udp_from("127.0.0.1", server, id, name).await
+}
+
+async fn ask_udp_from(source: &str, server: SocketAddr, id: u16, name: &str) -> Message {
+    let socket = UdpSocket::bind((source, 0)).await.unwrap();
     socket.send_to(&query(id, name), server).await.unwrap();
     let mut buf = vec![0u8; 4096];
     let (len, _) = tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buf))
@@ -218,4 +223,67 @@ async fn retries_tcp_upstream_that_drops_the_connection() {
     let response = upstreams.resolve(&request).await.unwrap();
     assert_eq!(response.answers[0].data, RData::A(ANSWER));
     assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn applies_per_client_rules_by_source_address() {
+    let (upstream, _) = fake_upstream(false).await;
+    let config = Config::parse(
+        r#"
+        [blocking]
+        denylist = ["ads.example.com"]
+
+        [[clients]]
+        name = "kids"
+        addresses = ["127.0.0.2"]
+        denylist = ["video.example"]
+
+        [[clients]]
+        name = "unfiltered"
+        addresses = ["127.0.0.3/32"]
+        blocklists = false
+        "#,
+    )
+    .unwrap();
+    let handler = Handler::new(
+        Arc::new(Blocklist::new(config.blocking.clone()).unwrap()),
+        &config.blocking,
+        Arc::new(Cache::new(CacheConfig::default())),
+        Upstreams::new(&UpstreamConfig {
+            servers: vec![UpstreamAddr::Udp(upstream)],
+            ..UpstreamConfig::default()
+        })
+        .unwrap(),
+        Arc::new(Stats::new(&StatsConfig::default())),
+    )
+    .with_clients(Arc::new(Clients::new(&config.clients)));
+    let server = server::bind_udp("127.0.0.1:0".parse().unwrap(), Arc::new(handler))
+        .await
+        .unwrap();
+
+    let code =
+        |source, name| async move { ask_udp_from(source, server, 1, name).await.response_code };
+    // Everyone else: only the shared rules.
+    assert_eq!(
+        code("127.0.0.1", "video.example.").await,
+        ResponseCode::NoError
+    );
+    assert_eq!(
+        code("127.0.0.1", "ads.example.com.").await,
+        ResponseCode::NXDomain
+    );
+    // Kids: their own denylist on top of the shared rules.
+    assert_eq!(
+        code("127.0.0.2", "video.example.").await,
+        ResponseCode::NXDomain
+    );
+    assert_eq!(
+        code("127.0.0.2", "ads.example.com.").await,
+        ResponseCode::NXDomain
+    );
+    // Unfiltered: the shared rules are skipped.
+    assert_eq!(
+        code("127.0.0.3", "ads.example.com.").await,
+        ResponseCode::NoError
+    );
 }

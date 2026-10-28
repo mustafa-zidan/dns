@@ -6,6 +6,18 @@
 listen = ["0.0.0.0:53"]
 tcp_idle_timeout_secs = 10
 
+[tls]
+# DNS-over-TLS and DNS-over-HTTPS for your own devices. Off until you list an
+# address. Both need a PEM certificate chain and private key for the name your
+# devices connect to.
+# cert_file = "/etc/dns/tls/fullchain.pem"
+# key_file = "/etc/dns/tls/privkey.pem"
+# dot_listen = ["0.0.0.0:853"]
+# doh_listen = ["0.0.0.0:443"]
+doh_path = "/dns-query"
+# Check the certificate files this often and load them if they changed.
+reload_interval_secs = 3600
+
 [upstream]
 # Tried in order until one answers. Encrypted transports are the default, so
 # your ISP (or anyone on the path) cannot see or tamper with your lookups.
@@ -44,6 +56,19 @@ denylist = []
 allowlist = []
 # Re-download lists this often. 0 disables refreshing.
 refresh_interval_secs = 86400
+
+# Rules for specific devices or networks, matched by source address. Repeat
+# the block for each group. (Default: no groups.)
+# [[clients]]
+# name = "kids"
+# # Addresses and networks. The most specific match wins.
+# addresses = ["192.168.1.20", "192.168.1.64/28"]
+# # Apply the shared [blocking] lists too.
+# blocklists = true
+# # Blocked for this group only, subdomains included.
+# denylist = ["youtube.com"]
+# # Never blocked for this group. Wins over everything else.
+# allowlist = []
 
 [api]
 # HTTP API for stats and runtime control (see the README for endpoints).

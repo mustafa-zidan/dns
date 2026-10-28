@@ -4,12 +4,17 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hickory_proto::op::Message;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::time::timeout;
+use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
 use crate::handler::{Handler, client_max_payload};
+use crate::padding;
+
+/// ALPN protocol id for DNS-over-TLS (RFC 7858).
+pub const DOT_ALPN: &[u8] = b"dot";
 
 /// Binds UDP and TCP on every address and serves until an error stops a listener.
 pub async fn serve(
@@ -70,7 +75,7 @@ async fn serve_udp(socket: Arc<UdpSocket>, handler: Arc<Handler>) -> Result<()> 
         let socket = Arc::clone(&socket);
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            let Some(response) = handler.handle_bytes(&request).await else {
+            let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
                 return;
             };
             let Some(bytes) = encode_udp(&response, client_max_payload(&request)) else {
@@ -99,23 +104,95 @@ fn encode(response: &Message) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// Binds DNS-over-TLS on every address and serves until a listener fails.
+pub async fn serve_dot(
+    listen: &[SocketAddr],
+    tls: TlsAcceptor,
+    handler: Arc<Handler>,
+    idle: Duration,
+) -> Result<()> {
+    let mut tasks = tokio::task::JoinSet::new();
+    for &addr in listen {
+        let listener = TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("binding DoT {addr}"))?;
+        info!(%addr, "listening for DNS-over-TLS");
+        tasks.spawn(serve_dot_listener(
+            listener,
+            tls.clone(),
+            Arc::clone(&handler),
+            idle,
+        ));
+    }
+    match tasks.join_next().await {
+        Some(result) => result?,
+        None => Ok(()),
+    }
+}
+
+/// Binds a DoT listener and serves it. Used by tests that need an ephemeral port.
+pub async fn bind_dot(
+    addr: SocketAddr,
+    tls: TlsAcceptor,
+    handler: Arc<Handler>,
+    idle: Duration,
+) -> Result<SocketAddr> {
+    let listener = TcpListener::bind(addr).await?;
+    let local = listener.local_addr()?;
+    tokio::spawn(serve_dot_listener(listener, tls, handler, idle));
+    Ok(local)
+}
+
 async fn serve_tcp(listener: TcpListener, handler: Arc<Handler>, idle: Duration) -> Result<()> {
     loop {
         let (stream, peer) = listener.accept().await?;
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            if let Err(e) = serve_tcp_conn(stream, handler, idle).await {
+            if let Err(e) = serve_stream(stream, peer, handler, idle, false).await {
                 debug!(%peer, error = %e, "TCP connection closed");
             }
         });
     }
 }
 
-async fn serve_tcp_conn(
-    mut stream: TcpStream,
+async fn serve_dot_listener(
+    listener: TcpListener,
+    tls: TlsAcceptor,
     handler: Arc<Handler>,
     idle: Duration,
 ) -> Result<()> {
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let tls = tls.clone();
+        let handler = Arc::clone(&handler);
+        tokio::spawn(async move {
+            // The handshake gets the same deadline as an idle connection, so
+            // a client that connects and stalls can't hold a task open.
+            let stream = match timeout(idle, tls.accept(stream)).await {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(e)) => return debug!(%peer, error = %e, "DoT handshake failed"),
+                Err(_) => return debug!(%peer, "DoT handshake timed out"),
+            };
+            if let Err(e) = serve_stream(stream, peer, handler, idle, true).await {
+                debug!(%peer, error = %e, "DoT connection closed");
+            }
+        });
+    }
+}
+
+/// Serves length-prefixed DNS messages (RFC 1035 section 4.2.2) on a TCP or
+/// TLS stream until the client closes it or goes idle. Over TLS, responses
+/// are padded for clients that pad their queries.
+async fn serve_stream<S>(
+    mut stream: S,
+    peer: SocketAddr,
+    handler: Arc<Handler>,
+    idle: Duration,
+    encrypted: bool,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     loop {
         let len = match timeout(idle, stream.read_u16()).await {
             Ok(Ok(len)) => usize::from(len),
@@ -125,10 +202,15 @@ async fn serve_tcp_conn(
         let mut request = vec![0u8; len];
         timeout(idle, stream.read_exact(&mut request)).await??;
 
-        let Some(response) = handler.handle_bytes(&request).await else {
+        let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
             return Ok(());
         };
-        let Some(bytes) = encode(&response) else {
+        let bytes = if encrypted {
+            encode_encrypted(&request, &response)
+        } else {
+            encode(&response)
+        };
+        let Some(bytes) = bytes else {
             return Ok(());
         };
         let len = u16::try_from(bytes.len())?;
@@ -136,5 +218,18 @@ async fn serve_tcp_conn(
         frame.extend_from_slice(&len.to_be_bytes());
         frame.extend_from_slice(&bytes);
         stream.write_all(&frame).await?;
+        stream.flush().await?;
     }
+}
+
+/// Serializes a response for an encrypted transport, padded to the block size
+/// RFC 8467 recommends when the client padded its query.
+pub fn encode_encrypted(request: &[u8], response: &Message) -> Option<Vec<u8>> {
+    let padded = Message::from_vec(request).is_ok_and(|q| padding::requested(&q));
+    if !padded {
+        return encode(response);
+    }
+    padding::encode_padded(response, padding::RESPONSE_BLOCK)
+        .inspect_err(|e| error!(error = %e, "failed to encode response"))
+        .ok()
 }

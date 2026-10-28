@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query, ResponseCode};
@@ -7,6 +8,7 @@ use tracing::{debug, warn};
 
 use crate::blocklist::{Blocklist, Verdict};
 use crate::cache::{Cache, CacheKey};
+use crate::clients::{self, Clients};
 use crate::config::{BlockMode, BlockingConfig};
 use crate::stats::{Outcome, Stats};
 use crate::upstream::Upstreams;
@@ -19,6 +21,7 @@ pub struct Handler {
     blocklist: Arc<Blocklist>,
     block_mode: BlockMode,
     blocked_ttl: u32,
+    clients: Arc<Clients>,
     cache: Arc<Cache>,
     upstreams: Upstreams,
     stats: Arc<Stats>,
@@ -36,17 +39,24 @@ impl Handler {
             blocklist,
             block_mode: blocking.mode,
             blocked_ttl: blocking.blocked_ttl,
+            clients: Arc::default(),
             cache,
             upstreams,
             stats,
         }
     }
 
-    /// Handles one wire-format query. Returns `None` when the bytes are too
-    /// broken to even answer with FORMERR.
-    pub async fn handle_bytes(&self, bytes: &[u8]) -> Option<Message> {
+    /// Applies per-client rules, matched by the query's source address.
+    pub fn with_clients(mut self, clients: Arc<Clients>) -> Self {
+        self.clients = clients;
+        self
+    }
+
+    /// Handles one wire-format query from `client`. Returns `None` when the
+    /// bytes are too broken to even answer with FORMERR.
+    pub async fn handle_bytes(&self, bytes: &[u8], client: IpAddr) -> Option<Message> {
         match Message::from_vec(bytes) {
-            Ok(request) => Some(self.handle(&request).await),
+            Ok(request) => Some(self.handle(&request, client).await),
             Err(e) => {
                 debug!(error = %e, "malformed query");
                 self.stats.record(None, Outcome::Invalid);
@@ -56,7 +66,7 @@ impl Handler {
         }
     }
 
-    pub async fn handle(&self, request: &Message) -> Message {
+    pub async fn handle(&self, request: &Message, client: IpAddr) -> Message {
         let invalid = |code| {
             self.stats.record(None, Outcome::Invalid);
             error_response(request, code)
@@ -76,12 +86,18 @@ impl Handler {
         let ascii = name.to_ascii();
         let lookup = ascii.trim_end_matches('.');
 
-        if self.blocklist.enabled()
-            && let Verdict::Blocked(rule) = self.blocklist.rules().check(lookup)
-        {
-            debug!(name = lookup, rule, "blocked");
-            self.stats.record(Some(lookup), Outcome::Blocked);
-            return self.blocked_response(request, query);
+        if self.blocklist.enabled() {
+            let group = self.clients.lookup(client);
+            if let Verdict::Blocked(rule) = clients::check(&self.blocklist.rules(), group, lookup) {
+                debug!(
+                    name = lookup,
+                    rule,
+                    client = group.map(|g| g.name.as_str()),
+                    "blocked"
+                );
+                self.stats.record(Some(lookup), Outcome::Blocked);
+                return self.blocked_response(request, query);
+            }
         }
 
         let dnssec_ok = request.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
@@ -205,6 +221,8 @@ mod tests {
 
     use hickory_proto::rr::Name;
 
+    const LOCAL: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
     fn handler(mode: BlockMode) -> Handler {
         let blocking = BlockingConfig {
             mode,
@@ -237,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn blocks_with_nxdomain() {
         let response = handler(BlockMode::Nxdomain)
-            .handle(&request("tracker.ads.example.com.", RecordType::A))
+            .handle(&request("tracker.ads.example.com.", RecordType::A), LOCAL)
             .await;
         assert_eq!(response.id, 4242);
         assert_eq!(response.response_code, ResponseCode::NXDomain);
@@ -247,12 +265,14 @@ mod tests {
     #[tokio::test]
     async fn blocks_with_null_ip() {
         let h = handler(BlockMode::NullIp);
-        let a = h.handle(&request("ads.example.com.", RecordType::A)).await;
+        let a = h
+            .handle(&request("ads.example.com.", RecordType::A), LOCAL)
+            .await;
         assert_eq!(a.response_code, ResponseCode::NoError);
         assert_eq!(a.answers[0].data, RData::A(A::new(0, 0, 0, 0)));
 
         let txt = h
-            .handle(&request("ads.example.com.", RecordType::TXT))
+            .handle(&request("ads.example.com.", RecordType::TXT), LOCAL)
             .await;
         assert_eq!(txt.response_code, ResponseCode::NoError);
         assert!(txt.answers.is_empty());
@@ -261,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn upstream_failure_is_servfail() {
         let response = handler(BlockMode::Nxdomain)
-            .handle(&request("example.org.", RecordType::A))
+            .handle(&request("example.org.", RecordType::A), LOCAL)
             .await;
         assert_eq!(response.response_code, ResponseCode::ServFail);
     }
@@ -270,14 +290,14 @@ mod tests {
     async fn rejects_non_query_opcodes() {
         let mut req = request("example.org.", RecordType::A);
         req.metadata.op_code = OpCode::Update;
-        let response = handler(BlockMode::Nxdomain).handle(&req).await;
+        let response = handler(BlockMode::Nxdomain).handle(&req, LOCAL).await;
         assert_eq!(response.response_code, ResponseCode::NotImp);
     }
 
     #[tokio::test]
     async fn malformed_bytes_get_formerr() {
         let response = handler(BlockMode::Nxdomain)
-            .handle_bytes(&[0x12, 0x34, 0xff])
+            .handle_bytes(&[0x12, 0x34, 0xff], LOCAL)
             .await
             .unwrap();
         assert_eq!(response.id, 0x1234);

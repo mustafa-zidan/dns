@@ -6,7 +6,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
-[![DoT / DoH](https://img.shields.io/badge/upstreams-DoT%20%7C%20DoH-success)](#features)
+[![DoT / DoH](https://img.shields.io/badge/DoT%20%7C%20DoH-clients%20%26%20upstreams-success)](#features)
 
 A DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
 
@@ -15,11 +15,13 @@ It sits between your devices and an upstream resolver. Queries for domains on yo
 ## Features
 
 - UDP and TCP listeners, with TC-bit truncation for oversized UDP answers.
+- DNS-over-TLS and DNS-over-HTTPS (HTTP/2 and HTTP/1.1, GET and POST) for your own devices, with certificates reloaded from disk when they are renewed.
 - Encrypted upstreams: DNS-over-TLS (the default, to Cloudflare and Quad9) and DNS-over-HTTPS, plus plain UDP/TCP. Upstreams are tried in order with failover.
 - Upstream hostnames are resolved through configurable bootstrap servers, never through the OS resolver, so the server can safely be its own host's resolver.
 - TTL-aware cache with min/max TTL clamping and RFC 2308 negative caching.
 - Blocklists from URLs or files, refreshed on a schedule. Hosts files, plain domain lists and adblock-style `||domain^` / `@@||domain^` rules are understood. A rule blocks the domain and all its subdomains.
 - Inline denylist and allowlist. The allowlist always wins.
+- Per-client rules: give a device or network its own denylist and allowlist, or let it skip the shared blocklists.
 - Blocked names answered with NXDOMAIN, `0.0.0.0` / `::`, or REFUSED.
 - Privacy: queries sent upstream get a fresh random ID and source port and carry none of the client's EDNS options, so EDNS Client Subnet never leaks your network. Encrypted queries are padded to 128-byte blocks (RFC 8467) so their size doesn't reveal the name. DoH requests send no User-Agent. Nothing is logged per query unless you turn on debug logging.
 
@@ -40,6 +42,33 @@ docker run -d --name dns -p 53:53/udp -p 53:53/tcp \
 ```
 
 The container runs as a non-root user.
+
+## Encrypted DNS for your devices
+
+Set `tls.cert_file` and `tls.key_file` to a PEM certificate chain and private key, then turn on the listeners you want:
+
+```toml
+[tls]
+cert_file = "/etc/dns/tls/fullchain.pem"
+key_file = "/etc/dns/tls/privkey.pem"
+dot_listen = ["0.0.0.0:853"]   # DNS-over-TLS, for Android "Private DNS" and similar
+doh_listen = ["0.0.0.0:443"]   # DNS-over-HTTPS at https://<name>/dns-query
+```
+
+The certificate must cover the name your devices connect to, so use one from a public CA (for example Let's Encrypt) or a CA your devices trust. The server checks the files every `tls.reload_interval_secs` (default one hour) and picks up a renewed certificate without a restart. If the new files don't load, it keeps serving the old certificate and logs the error.
+
+In Docker, mount the certificate directory and publish the ports:
+
+```sh
+docker run -d --name dns -p 53:53/udp -p 53:53/tcp -p 853:853/tcp -p 443:443/tcp \
+  -v "$PWD/dns.toml:/etc/dns/dns.toml:ro" \
+  -v "/etc/letsencrypt/live/dns.example.com:/etc/dns/tls:ro" \
+  ghcr.io/mustafa-zidan/dns:latest
+```
+
+The container user must be able to read the key file. Let's Encrypt's `live` directory holds symlinks into `archive`, so mount the parent `/etc/letsencrypt` instead if the links don't resolve inside the container.
+
+Responses to padded queries are padded to 468-byte blocks (RFC 8467). DoH answers carry a `Cache-Control: max-age` equal to their smallest TTL.
 
 ## Running from source
 
@@ -88,6 +117,27 @@ cors_origins = ["http://localhost:8080"]
 
 Leave `DNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
 
+## Per-client rules
+
+Groups in `[[clients]]` match queries by source address and change what gets blocked for them:
+
+```toml
+[[clients]]
+name = "kids"
+addresses = ["192.168.1.20", "192.168.1.64/28"]
+denylist = ["youtube.com", "tiktok.com"]
+
+[[clients]]
+name = "work-laptop"
+addresses = ["192.168.1.30", "fd00::30"]
+blocklists = false   # skip the shared lists; this group's own rules still apply
+allowlist = []
+```
+
+For a query from a group's address, the group's allowlist is checked first, then its denylist, then the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins. Turning blocking off or pausing it through the API turns off client rules too. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
+
+The server sees the address the query arrives from. Behind NAT or a DNS proxy, every device looks like that box. In Docker, the published UDP and TCP ports usually keep client addresses, but if every query appears to come from the Docker gateway, run the container with `--network host`.
+
 ## HTTP API
 
 The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
@@ -100,7 +150,7 @@ The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.tok
 | GET | `/api/blocking` | Whether blocking is active, rule counts, last reload and per-list status |
 | PUT | `/api/blocking` | `{"enabled": false}` turns blocking off, `{"enabled": false, "pause_secs": 300}` pauses it for 5 minutes, `{"enabled": true}` turns it back on |
 | POST | `/api/blocking/reload` | Re-download the blocklists now |
-| GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule |
+| GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule. Add `&client=<ip>` to apply that client's group |
 | GET | `/api/cache` | Number of cached answers |
 | DELETE | `/api/cache` | Empty the cache |
 
@@ -116,8 +166,8 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Serving DoH/DoT to clients.
-- Per-client rules.
+- Per-client blocklist URLs and schedules, such as bedtime rules.
+- Managing client groups from the dashboard.
 
 ## Development
 

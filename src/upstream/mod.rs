@@ -13,20 +13,18 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use hickory_proto::op::Message;
-use hickory_proto::rr::rdata::opt::EdnsOption;
 use serde::Deserialize;
 use tokio::time::timeout;
 use tracing::warn;
 
 use crate::config::UpstreamConfig;
+use crate::padding;
 
 pub use bootstrap::Bootstrap;
 
-/// EDNS(0) padding option code (RFC 7830).
-const EDNS_PADDING: u16 = 12;
 /// Queries over encrypted transports are padded to a multiple of this many
 /// bytes, the block size RFC 8467 recommends for clients.
-const PADDING_BLOCK: usize = 128;
+const PADDING_BLOCK: usize = padding::QUERY_BLOCK;
 
 /// Where an encrypted upstream lives: a fixed IP, or a hostname looked up
 /// through the bootstrap servers.
@@ -309,16 +307,7 @@ fn closed_early(error: &anyhow::Error) -> bool {
 /// Serializes a query for an encrypted transport, padded so its length does
 /// not give away which name is being looked up.
 fn encode_padded(query: &Message) -> Result<Vec<u8>> {
-    let mut query = query.clone();
-    let unpadded = query.to_vec()?.len();
-    let Some(edns) = query.edns.as_mut() else {
-        return Ok(query.to_vec()?);
-    };
-    // The option itself adds 4 bytes (code + length) before its payload.
-    let padding = (PADDING_BLOCK - (unpadded + 4) % PADDING_BLOCK) % PADDING_BLOCK;
-    edns.options_mut()
-        .insert(EdnsOption::Unknown(EDNS_PADDING, vec![0; padding]));
-    Ok(query.to_vec()?)
+    padding::encode_padded(query, PADDING_BLOCK)
 }
 
 /// Checks that `response` answers `query`: same ID and the same question.

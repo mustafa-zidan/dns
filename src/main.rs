@@ -4,13 +4,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use dns::api::{self, ApiState};
 use dns::blocklist::Blocklist;
 use dns::cache::Cache;
+use dns::certs::CertStore;
+use dns::clients::Clients;
 use dns::config::Config;
+use dns::doh;
 use dns::handler::Handler;
 use dns::server;
 use dns::stats::Stats;
@@ -45,13 +49,20 @@ async fn main() -> Result<()> {
     info!(servers = ?config.upstream.servers.iter().map(ToString::to_string).collect::<Vec<_>>(), "upstreams");
     let cache = Arc::new(Cache::new(config.cache.clone()));
     let stats = Arc::new(Stats::new(&config.stats));
-    let handler = Arc::new(Handler::new(
-        Arc::clone(&blocklist),
-        &config.blocking,
-        Arc::clone(&cache),
-        upstreams,
-        Arc::clone(&stats),
-    ));
+    let clients = Arc::new(Clients::new(&config.clients));
+    if !clients.is_empty() {
+        info!(groups = clients.len(), "per-client rules");
+    }
+    let handler = Arc::new(
+        Handler::new(
+            Arc::clone(&blocklist),
+            &config.blocking,
+            Arc::clone(&cache),
+            upstreams,
+            Arc::clone(&stats),
+        )
+        .with_clients(Arc::clone(&clients)),
+    );
 
     let api = async {
         if !config.api.enabled {
@@ -59,6 +70,7 @@ async fn main() -> Result<()> {
         }
         let state = ApiState {
             blocklist,
+            clients,
             cache,
             stats,
             token: config.api.token.as_deref().map(Arc::from),
@@ -67,12 +79,46 @@ async fn main() -> Result<()> {
         api::serve(config.api.listen, state).await
     };
 
+    let idle = Duration::from_secs(config.server.tcp_idle_timeout_secs);
+    let certs = match (&config.tls.cert_file, &config.tls.key_file) {
+        (Some(cert), Some(key)) if config.tls.enabled() => {
+            let certs = CertStore::load(cert, key)?;
+            certs.spawn_reload(Duration::from_secs(config.tls.reload_interval_secs));
+            Some(certs)
+        }
+        _ => None,
+    };
+    let dot = async {
+        match &certs {
+            Some(certs) if !config.tls.dot_listen.is_empty() => {
+                let tls = TlsAcceptor::from(certs.server_config(&[server::DOT_ALPN]));
+                server::serve_dot(&config.tls.dot_listen, tls, Arc::clone(&handler), idle).await
+            }
+            _ => std::future::pending().await,
+        }
+    };
+    let doh = async {
+        match &certs {
+            Some(certs) if !config.tls.doh_listen.is_empty() => {
+                let tls = TlsAcceptor::from(certs.server_config(doh::ALPN));
+                let path = &config.tls.doh_path;
+                doh::serve(
+                    &config.tls.doh_listen,
+                    path,
+                    tls,
+                    Arc::clone(&handler),
+                    idle,
+                )
+                .await
+            }
+            _ => std::future::pending().await,
+        }
+    };
+
     tokio::select! {
-        result = server::serve(
-            &config.server.listen,
-            handler,
-            Duration::from_secs(config.server.tcp_idle_timeout_secs),
-        ) => result,
+        result = server::serve(&config.server.listen, Arc::clone(&handler), idle) => result,
+        result = dot => result,
+        result = doh => result,
         result = api => result,
         _ = shutdown_signal() => {
             info!("shutting down");
