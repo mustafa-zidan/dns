@@ -246,7 +246,11 @@ async fn applies_per_client_rules_by_source_address() {
     )
     .unwrap();
     let handler = Handler::new(
-        Arc::new(Blocklist::new(config.blocking.clone()).unwrap()),
+        Arc::new(
+            Blocklist::new(config.blocking.clone())
+                .unwrap()
+                .with_clients(Arc::new(Clients::new(&config.clients, None).unwrap())),
+        ),
         &config.blocking,
         Arc::new(Cache::new(CacheConfig::default())),
         Upstreams::new(&UpstreamConfig {
@@ -255,8 +259,7 @@ async fn applies_per_client_rules_by_source_address() {
         })
         .unwrap(),
         Arc::new(Stats::new(&StatsConfig::default())),
-    )
-    .with_clients(Arc::new(Clients::new(&config.clients)));
+    );
     let server = server::bind_udp("127.0.0.1:0".parse().unwrap(), Arc::new(handler))
         .await
         .unwrap();

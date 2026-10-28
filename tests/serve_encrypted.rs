@@ -122,20 +122,21 @@ async fn handler() -> Arc<Handler> {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
     };
-    Arc::new(
-        Handler::new(
-            Arc::new(Blocklist::new(blocking.clone()).unwrap()),
-            &blocking,
-            Arc::new(Cache::new(CacheConfig::default())),
-            Upstreams::new(&UpstreamConfig {
-                servers: vec![UpstreamAddr::Udp(fake_upstream().await)],
-                ..UpstreamConfig::default()
-            })
-            .unwrap(),
-            Arc::new(Stats::new(&StatsConfig::default())),
-        )
-        .with_clients(loopback_client()),
-    )
+    Arc::new(Handler::new(
+        Arc::new(
+            Blocklist::new(blocking.clone())
+                .unwrap()
+                .with_clients(loopback_client()),
+        ),
+        &blocking,
+        Arc::new(Cache::new(CacheConfig::default())),
+        Upstreams::new(&UpstreamConfig {
+            servers: vec![UpstreamAddr::Udp(fake_upstream().await)],
+            ..UpstreamConfig::default()
+        })
+        .unwrap(),
+        Arc::new(Stats::new(&StatsConfig::default())),
+    ))
 }
 
 /// Per-client rules for this machine, to check the listeners pass on the
@@ -150,7 +151,7 @@ fn loopback_client() -> Arc<Clients> {
         "#,
     )
     .unwrap();
-    Arc::new(Clients::new(&config.clients))
+    Arc::new(Clients::new(&config.clients, None).unwrap())
 }
 
 async fn start_dot(store: &Arc<CertStore>) -> SocketAddr {

@@ -6,9 +6,8 @@ use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
 use tracing::{debug, warn};
 
-use crate::blocklist::{Blocklist, Verdict};
+use crate::blocklist::Blocklist;
 use crate::cache::{Cache, CacheKey};
-use crate::clients::{self, Clients};
 use crate::config::{BlockMode, BlockingConfig};
 use crate::stats::{Outcome, Stats};
 use crate::upstream::Upstreams;
@@ -21,7 +20,6 @@ pub struct Handler {
     blocklist: Arc<Blocklist>,
     block_mode: BlockMode,
     blocked_ttl: u32,
-    clients: Arc<Clients>,
     cache: Arc<Cache>,
     upstreams: Upstreams,
     stats: Arc<Stats>,
@@ -39,17 +37,10 @@ impl Handler {
             blocklist,
             block_mode: blocking.mode,
             blocked_ttl: blocking.blocked_ttl,
-            clients: Arc::default(),
             cache,
             upstreams,
             stats,
         }
-    }
-
-    /// Applies per-client rules, matched by the query's source address.
-    pub fn with_clients(mut self, clients: Arc<Clients>) -> Self {
-        self.clients = clients;
-        self
     }
 
     /// Handles one wire-format query from `client`. Returns `None` when the
@@ -86,18 +77,12 @@ impl Handler {
         let ascii = name.to_ascii();
         let lookup = ascii.trim_end_matches('.');
 
-        if self.blocklist.enabled() {
-            let group = self.clients.lookup(client);
-            if let Verdict::Blocked(rule) = clients::check(&self.blocklist.rules(), group, lookup) {
-                debug!(
-                    name = lookup,
-                    rule,
-                    client = group.map(|g| g.name.as_str()),
-                    "blocked"
-                );
-                self.stats.record(Some(lookup), Outcome::Blocked);
-                return self.blocked_response(request, query);
-            }
+        if self.blocklist.enabled()
+            && let Some((rule, group)) = self.blocklist.blocked_by(lookup, Some(client))
+        {
+            debug!(name = lookup, rule, client = group, "blocked");
+            self.stats.record(Some(lookup), Outcome::Blocked);
+            return self.blocked_response(request, query);
         }
 
         let dnssec_ok = request.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);

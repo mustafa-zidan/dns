@@ -126,6 +126,15 @@ Groups in `[[clients]]` match queries by source address and change what gets blo
 name = "kids"
 addresses = ["192.168.1.20", "192.168.1.64/28"]
 denylist = ["youtube.com", "tiktok.com"]
+allowlist = ["school.example"]
+lists = ["https://example.com/social-media.txt"]
+
+# Bedtime: on school nights, block everything but the allowlist.
+[[clients.schedules]]
+days = ["sun", "mon", "tue", "wed", "thu"]
+from = "21:00"
+to = "07:00"
+block_all = true
 
 [[clients]]
 name = "work-laptop"
@@ -134,7 +143,11 @@ blocklists = false   # skip the shared lists; this group's own rules still apply
 allowlist = []
 ```
 
-For a query from a group's address, the group's allowlist is checked first, then its denylist, then the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins. Turning blocking off or pausing it through the API turns off client rules too. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
+For a query from a group's address, the group's allowlist is checked first, then any schedule that is open right now, then the group's denylist and its own `lists`, and last the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins.
+
+A schedule opens on the days listed and runs from `from` to `to`. One that ends before it starts runs past midnight, so the bedtime above covers Thursday night into Friday morning but not Friday night. Times are in `server.timezone`, or the system's zone when it's unset. The Docker image runs in UTC, so set `server.timezone` there.
+
+A group's own `lists` load and refresh along with the shared ones, in the same formats. Turning blocking off or pausing it through the API turns off client rules too. You can also pause just one group's rules, so its devices get only the shared rules for a while, from the dashboard or with `PUT /api/clients/<name>`. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
 
 The server sees the address the query arrives from. Behind NAT or a DNS proxy, every device looks like that box. In Docker, the published UDP and TCP ports usually keep client addresses, but if every query appears to come from the Docker gateway, run the container with `--network host`.
 
@@ -151,6 +164,8 @@ The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.tok
 | PUT | `/api/blocking` | `{"enabled": false}` turns blocking off, `{"enabled": false, "pause_secs": 300}` pauses it for 5 minutes, `{"enabled": true}` turns it back on |
 | POST | `/api/blocking/reload` | Re-download the blocklists now |
 | GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule. Add `&client=<ip>` to apply that client's group |
+| GET | `/api/clients` | Client groups with their rule counts, list status, schedules (and whether each is open now) and pause state |
+| PUT | `/api/clients/<name>` | `{"pause_secs": 1800}` gives the group only the shared rules for 30 minutes, `{"pause_secs": 0}` resumes |
 | GET | `/api/cache` | Number of cached answers |
 | DELETE | `/api/cache` | Empty the cache |
 
@@ -166,7 +181,6 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Per-client blocklist URLs and schedules, such as bedtime rules.
 - Managing client groups from the dashboard.
 
 ## Development

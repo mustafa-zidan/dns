@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ipnet::IpNet;
+use jiff::civil::{Time, Weekday};
 use serde::Deserialize;
 
 use crate::upstream::UpstreamAddr;
@@ -29,6 +30,9 @@ pub struct ServerConfig {
     pub listen: Vec<SocketAddr>,
     /// How long an idle TCP connection is kept open.
     pub tcp_idle_timeout_secs: u64,
+    /// IANA time zone for client schedules, such as `Europe/Berlin`. Unset
+    /// uses the system's zone (the `TZ` variable or `/etc/localtime`).
+    pub timezone: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -36,6 +40,7 @@ impl Default for ServerConfig {
         Self {
             listen: vec!["0.0.0.0:53".parse().unwrap()],
             tcp_idle_timeout_secs: 10,
+            timezone: None,
         }
     }
 }
@@ -197,9 +202,81 @@ pub struct ClientConfig {
     #[serde(default)]
     pub denylist: Vec<String>,
     /// Domains never blocked for these clients (subdomains included). Wins
-    /// over this group's denylist and over the shared lists.
+    /// over every other rule, schedules included.
     #[serde(default)]
     pub allowlist: Vec<String>,
+    /// Blocklist sources for these clients only, in the same formats as
+    /// `blocking.lists`. Refreshed along with the shared lists.
+    #[serde(default)]
+    pub lists: Vec<String>,
+    /// Time windows with extra rules, such as a bedtime.
+    #[serde(default)]
+    pub schedules: Vec<ScheduleConfig>,
+}
+
+/// A weekly time window during which a client group gets extra rules.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleConfig {
+    /// Days the window starts on (`mon` to `sun`). Default: every day.
+    #[serde(default = "every_day", deserialize_with = "deserialize_days")]
+    pub days: Vec<Weekday>,
+    /// Start time, `HH:MM`, in `server.timezone`.
+    #[serde(deserialize_with = "deserialize_time")]
+    pub from: Time,
+    /// End time, `HH:MM`. Earlier than `from` means the window runs past
+    /// midnight into the next day.
+    #[serde(deserialize_with = "deserialize_time")]
+    pub to: Time,
+    /// Block every name except the group's allowlist.
+    #[serde(default)]
+    pub block_all: bool,
+    /// Domains blocked during the window (subdomains included).
+    #[serde(default)]
+    pub denylist: Vec<String>,
+}
+
+fn every_day() -> Vec<Weekday> {
+    use Weekday::*;
+    vec![
+        Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday,
+    ]
+}
+
+fn deserialize_days<'de, D>(deserializer: D) -> Result<Vec<Weekday>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use Weekday::*;
+    Vec::<String>::deserialize(deserializer)?
+        .iter()
+        .map(|day| {
+            let day = day.to_ascii_lowercase();
+            Ok(match day.get(..3).unwrap_or("") {
+                "mon" if "monday".starts_with(&day) => Monday,
+                "tue" if "tuesday".starts_with(&day) => Tuesday,
+                "wed" if "wednesday".starts_with(&day) => Wednesday,
+                "thu" if "thursday".starts_with(&day) => Thursday,
+                "fri" if "friday".starts_with(&day) => Friday,
+                "sat" if "saturday".starts_with(&day) => Saturday,
+                "sun" if "sunday".starts_with(&day) => Sunday,
+                _ => {
+                    return Err(serde::de::Error::custom(format!(
+                        "{day:?} is not a day of the week"
+                    )));
+                }
+            })
+        })
+        .collect()
+}
+
+fn deserialize_time<'de, D>(deserializer: D) -> Result<Time, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let text = String::deserialize(deserializer)?;
+    text.parse::<Time>()
+        .map_err(|_| serde::de::Error::custom(format!("{text:?} is not a time like \"21:30\"")))
 }
 
 fn default_true() -> bool {
@@ -314,6 +391,27 @@ impl Config {
                 "clients: {:?} has no addresses",
                 client.name
             );
+            for schedule in &client.schedules {
+                anyhow::ensure!(
+                    schedule.from != schedule.to,
+                    "clients: {:?} has a schedule that starts and ends at the same time",
+                    client.name
+                );
+                anyhow::ensure!(
+                    schedule.block_all || !schedule.denylist.is_empty(),
+                    "clients: {:?} has a schedule with nothing to block; set block_all or a denylist",
+                    client.name
+                );
+                anyhow::ensure!(
+                    !schedule.days.is_empty(),
+                    "clients: {:?} has a schedule with no days",
+                    client.name
+                );
+            }
+        }
+        if let Some(zone) = &config.server.timezone {
+            jiff::tz::TimeZone::get(zone)
+                .with_context(|| format!("server.timezone: {zone:?} is not a known time zone"))?;
         }
         for origin in &mut config.api.cors_origins {
             *origin = parse_origin(origin)

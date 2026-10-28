@@ -40,7 +40,14 @@ async fn main() -> Result<()> {
         None => Config::default(),
     };
 
-    let blocklist = Arc::new(Blocklist::new(config.blocking.clone())?);
+    let clients = Arc::new(Clients::new(
+        &config.clients,
+        config.server.timezone.as_deref(),
+    )?);
+    if !clients.is_empty() {
+        info!(groups = clients.len(), "per-client rules");
+    }
+    let blocklist = Arc::new(Blocklist::new(config.blocking.clone())?.with_clients(clients));
     // Lists load even when blocking starts disabled, so it can be switched on
     // through the API without waiting for a download.
     blocklist.spawn_refresh();
@@ -49,20 +56,13 @@ async fn main() -> Result<()> {
     info!(servers = ?config.upstream.servers.iter().map(ToString::to_string).collect::<Vec<_>>(), "upstreams");
     let cache = Arc::new(Cache::new(config.cache.clone()));
     let stats = Arc::new(Stats::new(&config.stats));
-    let clients = Arc::new(Clients::new(&config.clients));
-    if !clients.is_empty() {
-        info!(groups = clients.len(), "per-client rules");
-    }
-    let handler = Arc::new(
-        Handler::new(
-            Arc::clone(&blocklist),
-            &config.blocking,
-            Arc::clone(&cache),
-            upstreams,
-            Arc::clone(&stats),
-        )
-        .with_clients(Arc::clone(&clients)),
-    );
+    let handler = Arc::new(Handler::new(
+        Arc::clone(&blocklist),
+        &config.blocking,
+        Arc::clone(&cache),
+        upstreams,
+        Arc::clone(&stats),
+    ));
 
     let api = async {
         if !config.api.enabled {
@@ -70,7 +70,6 @@ async fn main() -> Result<()> {
         }
         let state = ApiState {
             blocklist,
-            clients,
             cache,
             stats,
             token: config.api.token.as_deref().map(Arc::from),
