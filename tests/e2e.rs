@@ -188,6 +188,33 @@ async fn serves_tcp_clients() {
 }
 
 #[tokio::test]
+async fn answers_pipelined_tcp_queries_as_they_are_ready() {
+    // An upstream that never answers, so forwarded queries hang until they time out.
+    let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let (_, tcp) = start_server(silent.local_addr().unwrap()).await;
+
+    let mut stream = TcpStream::connect(tcp).await.unwrap();
+    for (id, name) in [
+        (20u16, "slow.example.org."),
+        (21, "banner.ads.example.com."),
+    ] {
+        let bytes = query(id, name);
+        stream.write_u16(bytes.len() as u16).await.unwrap();
+        stream.write_all(&bytes).await.unwrap();
+    }
+    // The blocked name is answered first, without waiting for the slow one.
+    let len = tokio::time::timeout(Duration::from_secs(1), stream.read_u16())
+        .await
+        .expect("blocked query held up behind the slow one")
+        .unwrap() as usize;
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await.unwrap();
+    let response = Message::from_vec(&buf).unwrap();
+    assert_eq!(response.id, 21);
+    assert_eq!(response.response_code, ResponseCode::NXDomain);
+}
+
+#[tokio::test]
 async fn retries_tcp_upstream_that_drops_the_connection() {
     // Reads the first query and hangs up; answers on the next connection.
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

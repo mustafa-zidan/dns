@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::fmt;
+use std::hash::BuildHasher;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -6,6 +7,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use arc_swap::ArcSwap;
+use foldhash::fast::RandomState;
+use hashbrown::HashTable;
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -13,38 +16,91 @@ use crate::clients::{self, Clients};
 use crate::config::BlockingConfig;
 
 /// A set of domains where an entry also matches all of its subdomains.
-#[derive(Debug, Default)]
+///
+/// Lists run to a million domains or more, so the entries are packed end to
+/// end in one buffer and the hash table holds only their positions, instead
+/// of a separate heap allocation per domain.
+#[derive(Default)]
 pub struct DomainSet {
-    domains: HashSet<Box<str>>,
+    /// Every entry's text, back to back.
+    arena: String,
+    table: HashTable<Span>,
+    hasher: RandomState,
+}
+
+/// Where an entry sits in [`DomainSet::arena`]. Domains are at most 253
+/// bytes long, so the length fits in a byte.
+#[derive(Clone, Copy)]
+struct Span {
+    start: u32,
+    len: u8,
 }
 
 impl DomainSet {
     pub fn insert(&mut self, domain: &str) {
-        if let Some(domain) = normalize(domain) {
-            self.domains.insert(domain.into_boxed_str());
+        let Some(domain) = normalize(domain) else {
+            return;
+        };
+        let Self {
+            arena,
+            table,
+            hasher,
+        } = self;
+        let hash = hasher.hash_one(&domain);
+        let entry = table.entry(
+            hash,
+            |&span| text(arena, span) == domain,
+            |&span| hasher.hash_one(text(arena, span)),
+        );
+        // The buffer is limited to 4 GiB, far beyond any real list.
+        if let hashbrown::hash_table::Entry::Vacant(slot) = entry
+            && let Ok(start) = u32::try_from(arena.len())
+        {
+            arena.push_str(&domain);
+            slot.insert(Span {
+                start,
+                len: domain.len() as u8,
+            });
         }
     }
 
     pub fn len(&self) -> usize {
-        self.domains.len()
+        self.table.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.domains.is_empty()
+        self.table.is_empty()
     }
 
     /// Returns the entry matching `name` or one of its parent domains.
     pub fn matches(&self, name: &str) -> Option<&str> {
         let mut candidate = name;
         loop {
-            if let Some(hit) = self.domains.get(candidate) {
-                return Some(hit);
+            let hash = self.hasher.hash_one(candidate);
+            if let Some(&span) = self
+                .table
+                .find(hash, |&span| text(&self.arena, span) == candidate)
+            {
+                return Some(text(&self.arena, span));
             }
             match candidate.split_once('.') {
                 Some((_, parent)) if !parent.is_empty() => candidate = parent,
                 _ => return None,
             }
         }
+    }
+}
+
+fn text(arena: &str, span: Span) -> &str {
+    let start = span.start as usize;
+    &arena[start..start + usize::from(span.len)]
+}
+
+impl fmt::Debug for DomainSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DomainSet")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -166,6 +222,20 @@ fn adblock_domain(rest: &str) -> Option<&str> {
     }
     let domain = rule.strip_suffix('^').unwrap_or(rule);
     (!domain.is_empty() && !domain.contains(['/', '*', '^', '|'])).then_some(domain)
+}
+
+/// Adds a list's rules on a blocking thread. A big list takes a good part
+/// of a second to parse, which would otherwise hold up the queries waiting
+/// on this worker thread.
+async fn add_list_blocking(rules: &mut Rules, text: String) {
+    let mut owned = std::mem::take(rules);
+    owned = tokio::task::spawn_blocking(move || {
+        owned.add_list(&text);
+        owned
+    })
+    .await
+    .expect("parsing a blocklist panicked");
+    *rules = owned;
 }
 
 /// The outcome of loading one blocklist source.
@@ -321,7 +391,7 @@ impl Blocklist {
             match self.fetch(source).await {
                 Ok(text) => {
                     let before = rules.blocked.len();
-                    rules.add_list(&text);
+                    add_list_blocking(rules, text).await;
                     let added = rules.blocked.len() - before;
                     info!(list = source, added, "loaded blocklist");
                     sources.push(SourceStatus {

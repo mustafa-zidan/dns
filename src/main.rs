@@ -21,6 +21,10 @@ use hushdns::server;
 use hushdns::stats::Stats;
 use hushdns::upstream::Upstreams;
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {

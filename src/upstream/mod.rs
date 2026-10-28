@@ -264,21 +264,23 @@ impl Upstreams {
 
     /// Sends `query` to each upstream in order and returns the first valid response.
     pub async fn resolve(&self, query: &Message) -> Result<Message> {
-        let mut last_err = anyhow!("no upstream servers configured");
+        // The error is only built once a server fails: building one is not
+        // free, and most queries succeed on the first server.
+        let mut last_err = None;
         for server in &self.servers {
             match timeout(self.timeout, server.exchange(query)).await {
                 Ok(Ok(response)) => return Ok(response),
                 Ok(Err(e)) => {
                     warn!(upstream = %server.addr, error = %format!("{e:#}"), "upstream query failed");
-                    last_err = e;
+                    last_err = Some(e);
                 }
                 Err(_) => {
                     warn!(upstream = %server.addr, "upstream query timed out");
-                    last_err = anyhow!("timed out querying {}", server.addr);
+                    last_err = Some(anyhow!("timed out querying {}", server.addr));
                 }
             }
         }
-        Err(last_err)
+        Err(last_err.unwrap_or_else(|| anyhow!("no upstream servers configured")))
     }
 }
 

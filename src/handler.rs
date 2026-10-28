@@ -10,11 +10,14 @@ use tracing::{debug, warn};
 use crate::blocklist::Blocklist;
 use crate::cache::{Cache, CacheKey};
 use crate::config::{BlockMode, BlockingConfig};
+use crate::padding;
 use crate::stats::{Outcome, Stats};
 use crate::upstream::Upstreams;
 
 /// EDNS payload size we advertise, per the DNS Flag Day 2020 recommendation.
 const EDNS_PAYLOAD: u16 = 1232;
+/// UDP payload every client accepts (RFC 1035).
+const MIN_UDP_PAYLOAD: usize = 512;
 
 /// How a query reached the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,19 @@ impl Peer {
     pub fn new(ip: IpAddr, transport: Transport) -> Self {
         Self { ip, transport }
     }
+}
+
+/// A response to one query, with what its transport needs to know about the
+/// query to send it. The query is parsed once, here, so transports never
+/// parse it again.
+#[derive(Debug)]
+pub struct Reply {
+    pub message: Message,
+    /// Largest UDP response the client accepts.
+    pub max_udp_payload: usize,
+    /// Whether the client padded its query, so the response should be padded
+    /// too (RFC 8467, section 4.1).
+    pub pad: bool,
 }
 
 /// What [`Handler::answer`] decided, for stats and the query log.
@@ -91,9 +107,13 @@ impl Handler {
 
     /// Handles one wire-format query from `peer`. Returns `None` when the
     /// bytes are too broken to even answer with FORMERR.
-    pub async fn handle_bytes(&self, bytes: &[u8], peer: Peer) -> Option<Message> {
+    pub async fn handle_bytes(&self, bytes: &[u8], peer: Peer) -> Option<Reply> {
         match Message::from_vec(bytes) {
-            Ok(request) => Some(self.handle(&request, peer).await),
+            Ok(request) => Some(Reply {
+                max_udp_payload: max_udp_payload(&request),
+                pad: padding::requested(&request),
+                message: self.handle(&request, peer).await,
+            }),
             Err(e) => {
                 debug!(
                     target: "hushdns::query",
@@ -105,7 +125,11 @@ impl Handler {
                 );
                 self.stats.record(None, Outcome::Invalid);
                 let id = u16::from_be_bytes([*bytes.first()?, *bytes.get(1)?]);
-                Some(Message::error_msg(id, OpCode::Query, ResponseCode::FormErr))
+                Some(Reply {
+                    message: Message::error_msg(id, OpCode::Query, ResponseCode::FormErr),
+                    max_udp_payload: MIN_UDP_PAYLOAD,
+                    pad: false,
+                })
             }
         }
     }
@@ -276,11 +300,10 @@ fn response_edns(dnssec_ok: bool) -> Edns {
 }
 
 /// Largest UDP response the client said it accepts.
-pub fn client_max_payload(request_bytes: &[u8]) -> usize {
-    Message::from_vec(request_bytes)
-        .ok()
-        .and_then(|m| m.edns.map(|e| e.max_payload()))
-        .map_or(512, |p| usize::from(p.clamp(512, EDNS_PAYLOAD)))
+fn max_udp_payload(request: &Message) -> usize {
+    request.edns.as_ref().map_or(MIN_UDP_PAYLOAD, |e| {
+        usize::from(e.max_payload().clamp(MIN_UDP_PAYLOAD as u16, EDNS_PAYLOAD))
+    })
 }
 
 #[cfg(test)]
@@ -372,8 +395,21 @@ mod tests {
         let response = handler(BlockMode::Nxdomain)
             .handle_bytes(&[0x12, 0x34, 0xff], LOCAL)
             .await
-            .unwrap();
+            .unwrap()
+            .message;
         assert_eq!(response.id, 0x1234);
         assert_eq!(response.response_code, ResponseCode::FormErr);
+    }
+
+    #[test]
+    fn reads_udp_payload_size_from_edns() {
+        let mut req = request("example.org.", RecordType::A);
+        assert_eq!(max_udp_payload(&req), 512);
+        for (advertised, expected) in [(4096, 1232), (1400, 1232), (800, 800), (100, 512)] {
+            let mut edns = Edns::new();
+            edns.set_max_payload(advertised);
+            req.set_edns(edns);
+            assert_eq!(max_udp_payload(&req), expected, "advertised {advertised}");
+        }
     }
 }

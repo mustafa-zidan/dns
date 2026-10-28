@@ -56,6 +56,12 @@ enum Command {
         /// The target the others are compared against.
         #[arg(long)]
         baseline: String,
+        /// Fail if any target's queries per second fall more than this many
+        /// percent below the baseline's in any scenario. Only targets of the
+        /// same server as the baseline are checked (the first word of their
+        /// names match), so a run that includes Technitium checks hushdns only.
+        #[arg(long)]
+        max_regression: Option<f64>,
         files: Vec<PathBuf>,
     },
 }
@@ -138,7 +144,11 @@ fn main() -> Result<()> {
             }
             fs::write(&out, text).with_context(|| format!("writing {}", out.display()))
         }
-        Command::Report { baseline, files } => report(&baseline, &files),
+        Command::Report {
+            baseline,
+            max_regression,
+            files,
+        } => report(&baseline, max_regression, &files),
         command => tokio::runtime::Runtime::new()?.block_on(run_async(command)),
     }
 }
@@ -418,7 +428,7 @@ fn peak_rss_kb(pid: u32) -> Option<u64> {
     line.split_whitespace().nth(1)?.parse().ok()
 }
 
-fn report(baseline: &str, files: &[PathBuf]) -> Result<()> {
+fn report(baseline: &str, max_regression: Option<f64>, files: &[PathBuf]) -> Result<()> {
     // For repeated runs of the same target and scenario, keep the median by QPS.
     let mut runs: BTreeMap<(Scenario, String), Vec<Outcome>> = BTreeMap::new();
     let mut targets: Vec<String> = Vec::new();
@@ -485,7 +495,45 @@ fn report(baseline: &str, files: &[PathBuf]) -> Result<()> {
     println!(
         "Percent changes are against {baseline}. For queries per second higher is better; for latency lower is better."
     );
+
+    let Some(limit) = max_regression else {
+        return Ok(());
+    };
+    let mut regressions = Vec::new();
+    for &scenario in &scenarios {
+        let Some(base) = median(scenario, baseline) else {
+            continue;
+        };
+        let server = |target: &str| target.split_whitespace().next().map(str::to_owned);
+        for target in targets
+            .iter()
+            .filter(|t| *t != baseline && server(t) == server(baseline))
+        {
+            if let Some(o) = median(scenario, target)
+                && let Some(drop) = regression(base.qps, o.qps, limit)
+            {
+                regressions.push(format!(
+                    "{target} {}: {drop:.1}% fewer queries/s",
+                    scenario.label()
+                ));
+            }
+        }
+    }
+    if !regressions.is_empty() {
+        println!();
+        println!("**Regressions over {limit}%:**");
+        for r in &regressions {
+            println!("- {r}");
+        }
+        bail!("throughput fell more than {limit}% below {baseline}");
+    }
     Ok(())
+}
+
+/// How many percent `qps` is below `base`, if that's more than `limit`.
+fn regression(base: f64, qps: f64, limit: f64) -> Option<f64> {
+    let drop = (base - qps) / base * 100.0;
+    (base > 0.0 && drop > limit).then_some(drop)
 }
 
 fn micros(us: u64) -> String {
@@ -510,6 +558,14 @@ mod tests {
         assert_eq!(a[3] & 0x0f, 0);
         assert_eq!(u16::from_be_bytes([a[6], a[7]]), 1);
         assert_eq!(&a[a.len() - 4..], &[192, 0, 2, 1]);
+    }
+
+    #[test]
+    fn flags_only_drops_past_the_limit() {
+        assert_eq!(regression(1000.0, 900.0, 15.0), None);
+        assert_eq!(regression(1000.0, 1200.0, 15.0), None);
+        assert_eq!(regression(1000.0, 800.0, 15.0), Some(20.0));
+        assert_eq!(regression(0.0, 10.0, 15.0), None);
     }
 
     #[test]

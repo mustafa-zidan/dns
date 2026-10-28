@@ -37,10 +37,13 @@ async fn udp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result
     socket.connect(addr).await?;
     socket.send(bytes).await?;
 
-    let mut buf = vec![0u8; 65_535];
+    // Room for the largest possible message, left uninitialized: recv_buf
+    // only exposes the bytes it received.
+    let mut buf = Vec::with_capacity(65_535);
     loop {
-        let len = socket.recv(&mut buf).await?;
-        match Message::from_vec(&buf[..len]) {
+        buf.clear();
+        socket.recv_buf(&mut buf).await?;
+        match Message::from_vec(&buf) {
             Ok(response) if is_response_to(&response, query) => return Ok(response),
             Ok(_) => debug!(upstream = %addr, "ignoring mismatched upstream answer"),
             Err(e) => debug!(upstream = %addr, error = %e, "ignoring malformed upstream answer"),

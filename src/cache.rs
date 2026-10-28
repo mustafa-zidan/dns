@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use foldhash::fast::RandomState;
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
 use moka::Expiry;
@@ -36,7 +37,7 @@ impl Expiry<CacheKey, Entry> for EntryExpiry {
 
 /// A TTL-aware response cache.
 pub struct Cache {
-    inner: Option<MokaCache<CacheKey, Entry>>,
+    inner: Option<MokaCache<CacheKey, Entry, RandomState>>,
     config: CacheConfig,
 }
 
@@ -46,7 +47,7 @@ impl Cache {
             MokaCache::builder()
                 .max_capacity(config.max_entries)
                 .expire_after(EntryExpiry)
-                .build()
+                .build_with_hasher(RandomState::default())
         });
         Self { inner, config }
     }
