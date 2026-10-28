@@ -46,7 +46,7 @@ jobs:
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           name="hushdns-$version-${{ matrix.arch }}-linux"
           mkdir -p "dist/$name"
-          cp target/release/hushdns README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT config/hushdns.toml "dist/$name/"
+          cp target/release/hushdns README.md CHANGELOG.md LICENSE config/hushdns.toml "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:

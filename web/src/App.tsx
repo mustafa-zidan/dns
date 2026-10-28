@@ -7,6 +7,8 @@ import { duration, parseApiUrl } from "./format";
 import { savedApiUrl, savedToken, saveApiUrl, saveToken } from "./storage";
 
 const REFRESH_MS = 5000;
+/** Where the source is. The AGPL asks that people using hushdns over a network can get it. */
+const SOURCE_URL = "https://github.com/mustafa-zidan/hushdns";
 
 export interface Snapshot {
   stats: Stats;
@@ -140,6 +142,11 @@ export function App() {
             </button>
           </p>
         )}
+        <p className="muted footer">
+          hushdns is free software under the{" "}
+          <a href={`${SOURCE_URL}/blob/main/LICENSE`}>GNU AGPL</a>.{" "}
+          <a href={SOURCE_URL}>Source code</a>
+        </p>
       </main>
     </>
   );
