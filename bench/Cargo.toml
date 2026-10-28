@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "Load generator and fake upstream for benchmarking hushdns"
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 publish = false
 
 [dependencies]

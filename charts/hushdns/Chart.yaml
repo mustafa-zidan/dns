@@ -16,4 +16,4 @@ keywords:
   - dns-over-https
   - dns-over-tls
 annotations:
-  artifacthub.io/license: AGPL-3.0-or-later
+  artifacthub.io/license: GPL-3.0-or-later

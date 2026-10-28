@@ -52,4 +52,4 @@ In development it calls the API at `http://127.0.0.1:8053` (set in `web/public/c
 
 ## License
 
-Unless you say otherwise, any contribution you submit is licensed under the GNU Affero General Public License, version 3 or later, as the project is, without any additional terms or conditions.
+Unless you say otherwise, any contribution you submit is licensed under the GNU General Public License, version 3 or later, as the project is, without any additional terms or conditions.
