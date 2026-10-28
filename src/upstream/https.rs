@@ -5,9 +5,10 @@ use std::sync::Arc;
 use anyhow::{Result, bail};
 use hickory_proto::op::Message;
 use rustls::ClientConfig;
+use tracing::debug;
 
 use super::bootstrap::{Bootstrap, BootstrapResolver};
-use super::{encode_padded, is_response_to};
+use super::{closed_early, encode_padded, is_response_to};
 
 const DNS_MESSAGE: &str = "application/dns-message";
 
@@ -43,6 +44,21 @@ impl HttpsUpstream {
         query.metadata.id = 0;
         let body = encode_padded(&query)?;
 
+        let bytes = match self.post(body.clone()).await {
+            Err(e) if closed_early(&e) => {
+                debug!(error = %e, "DoH upstream closed the connection early, retrying once");
+                self.post(body).await
+            }
+            result => result,
+        }?;
+        let answer = Message::from_vec(&bytes)?;
+        if !is_response_to(&answer, &query) {
+            bail!("upstream answer does not match the query");
+        }
+        Ok(answer)
+    }
+
+    async fn post(&self, body: Vec<u8>) -> Result<Vec<u8>> {
         let response = self
             .client
             .post(self.url.clone())
@@ -54,11 +70,6 @@ impl HttpsUpstream {
         if !response.status().is_success() {
             bail!("HTTP {}", response.status());
         }
-        let bytes = response.bytes().await?;
-        let answer = Message::from_vec(&bytes)?;
-        if !is_response_to(&answer, &query) {
-            bail!("upstream answer does not match the query");
-        }
-        Ok(answer)
+        Ok(response.bytes().await?.to_vec())
     }
 }

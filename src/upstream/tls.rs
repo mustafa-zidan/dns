@@ -15,7 +15,7 @@ use tokio_rustls::client::TlsStream;
 use tracing::debug;
 
 use super::bootstrap::Bootstrap;
-use super::{Host, encode_padded, plain};
+use super::{Host, closed_early, encode_padded, plain};
 
 /// Idle connections kept per upstream.
 const MAX_IDLE: usize = 4;
@@ -68,8 +68,18 @@ impl TlsUpstream {
                 Err(e) => debug!(error = %e, "reused DoT connection failed"),
             }
         }
+        match self.fresh_exchange(&bytes, query).await {
+            Err(e) if closed_early(&e) => {
+                debug!(error = %e, "DoT upstream closed the connection early, retrying once");
+                self.fresh_exchange(&bytes, query).await
+            }
+            result => result,
+        }
+    }
+
+    async fn fresh_exchange(&self, bytes: &[u8], query: &Message) -> Result<Message> {
         let mut stream = self.connect().await?;
-        let response = plain::stream_exchange(&mut stream, &bytes, query).await?;
+        let response = plain::stream_exchange(&mut stream, bytes, query).await?;
         self.put_idle(stream);
         Ok(response)
     }

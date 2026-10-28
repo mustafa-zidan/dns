@@ -181,3 +181,41 @@ async fn serves_tcp_clients() {
         assert_eq!(response.answers[0].data, RData::A(ANSWER));
     }
 }
+
+#[tokio::test]
+async fn retries_tcp_upstream_that_drops_the_connection() {
+    // Reads the first query and hangs up; answers on the next connection.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&connections);
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let first = seen.fetch_add(1, Ordering::SeqCst) == 0;
+            let len = stream.read_u16().await.unwrap();
+            let mut buf = vec![0u8; len as usize];
+            stream.read_exact(&mut buf).await.unwrap();
+            if first {
+                continue;
+            }
+            let bytes = answer_for(&Message::from_vec(&buf).unwrap(), false);
+            stream.write_u16(bytes.len() as u16).await.unwrap();
+            stream.write_all(&bytes).await.unwrap();
+        }
+    });
+
+    let upstreams = Upstreams::new(&UpstreamConfig {
+        servers: vec![UpstreamAddr::Tcp(addr)],
+        ..UpstreamConfig::default()
+    })
+    .unwrap();
+    let mut request = Message::new(9, MessageType::Query, OpCode::Query);
+    request.add_query(Query::query(
+        Name::from_str("example.org.").unwrap(),
+        RecordType::A,
+    ));
+    let response = upstreams.resolve(&request).await.unwrap();
+    assert_eq!(response.answers[0].data, RData::A(ANSWER));
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
