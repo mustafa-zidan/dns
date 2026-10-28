@@ -1,3 +1,5 @@
+<p align="center"><img src="images/logo.svg" alt="" width="96" height="96"></p>
+
 # hushdns
 
 hushdns is a DNS server for your home or office network that blocks ads and trackers and keeps your lookups private. It's written in Rust and inspired by [Technitium DNS Server](https://technitium.com/dns/).

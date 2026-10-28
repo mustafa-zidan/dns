@@ -10,6 +10,7 @@ The first release.
 
 ### Added
 
+- The hushdns logo, a pixel block with an h, in the dashboard header, as its favicon and on the docs site.
 - User docs with dashboard screenshots, published at the project's GitHub Pages site on each release.
 - Linux binaries for `x86_64` and `aarch64` with every release, with SHA-256 checksums.
 - UDP and TCP DNS server forwarding to upstream resolvers with failover and a TTL-aware cache.

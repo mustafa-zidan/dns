@@ -11,6 +11,7 @@
   --bar: #d6eadf;
   --bar-block: #f1d7d1;
   --warn: #8a5a00;
+  --logo-dot: #ef8a75;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -25,6 +26,7 @@
     --bar: #24392d;
     --bar-block: #432722;
     --warn: #e0b45c;
+    --logo-dot: #b4432f;
   }
 }
 
@@ -38,6 +40,11 @@ body {
 h1, h2 { margin: 0; font-weight: 600; }
 h1 { font-size: 1.15rem; letter-spacing: .02em; }
 h2 { font-size: 1rem; margin-bottom: .75rem; }
+.brand { display: flex; align-items: center; gap: .5rem; }
+.logo { flex: none; }
+.logo-block { fill: var(--accent); }
+.logo-h { fill: var(--accent-text); }
+.logo-dot { fill: var(--logo-dot); }
 
 .bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;

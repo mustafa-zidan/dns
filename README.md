@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/src/images/logo.svg" alt="" width="96" height="96"></p>
+
 # hushdns
 
 [![CI](https://github.com/mustafa-zidan/hushdns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/hushdns/actions/workflows/ci.yml)

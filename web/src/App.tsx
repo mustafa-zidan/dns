@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Api, loadConfig, Unauthorized } from "./api";
 import type { Blocking, CacheStatus, Clients, Stats } from "./api";
 import { Dashboard } from "./Dashboard";
+import { Logo } from "./Logo";
 import { duration, parseApiUrl } from "./format";
 import { savedApiUrl, savedToken, saveApiUrl, saveToken } from "./storage";
 
@@ -166,7 +167,10 @@ function Header(props: {
 
   return (
     <header className="bar">
-      <h1>hushdns</h1>
+      <h1 className="brand">
+        <Logo />
+        hushdns
+      </h1>
       <span className={state.className}>{state.text}</span>
       {blocking && (
         <div className="actions">
