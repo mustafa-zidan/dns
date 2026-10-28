@@ -13,8 +13,8 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls::TlsAcceptor;
 
-use dns::config::UpstreamConfig;
-use dns::upstream::{UpstreamAddr, Upstreams};
+use hushdns::config::UpstreamConfig;
+use hushdns::upstream::{UpstreamAddr, Upstreams};
 
 const ANSWER: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 53);
 

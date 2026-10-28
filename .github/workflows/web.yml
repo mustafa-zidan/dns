@@ -1,7 +1,7 @@
 name: Dashboard
 
 # Checks the web dashboard in web/ and builds its image. Pushes to main and
-# version tags publish ghcr.io/<owner>/dns-dashboard. The image's final stage
+# version tags publish ghcr.io/<owner>/hushdns-dashboard. The image's final stage
 # only copies files, so one runner builds both architectures without QEMU.
 
 on:

@@ -166,7 +166,7 @@ function Header(props: {
 
   return (
     <header className="bar">
-      <h1>DNS</h1>
+      <h1>hushdns</h1>
       <span className={state.className}>{state.text}</span>
       {blocking && (
         <div className="actions">

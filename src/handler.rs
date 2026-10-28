@@ -96,7 +96,7 @@ impl Handler {
             Ok(request) => Some(self.handle(&request, peer).await),
             Err(e) => {
                 debug!(
-                    target: "dns::query",
+                    target: "hushdns::query",
                     client_ip = %peer.ip,
                     transport = peer.transport.as_str(),
                     outcome = Outcome::Invalid.as_str(),
@@ -110,7 +110,7 @@ impl Handler {
         }
     }
 
-    /// Answers one query, counts it, and logs it on the `dns::query` target
+    /// Answers one query, counts it, and logs it on the `hushdns::query` target
     /// at debug level, with the same field names every time so the log can
     /// be searched.
     pub async fn handle(&self, request: &Message, peer: Peer) -> Message {
@@ -125,7 +125,7 @@ impl Handler {
             .flatten();
         self.stats.record(counted, answered.outcome);
         debug!(
-            target: "dns::query",
+            target: "hushdns::query",
             name = name.as_deref(),
             qtype = request.queries.first().map(|q| q.query_type().to_string()),
             outcome = answered.outcome.as_str(),

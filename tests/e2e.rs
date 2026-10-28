@@ -12,14 +12,14 @@ use hickory_proto::rr::{Name, RData, Record, RecordType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
-use dns::blocklist::Blocklist;
-use dns::cache::Cache;
-use dns::clients::Clients;
-use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
-use dns::handler::Handler;
-use dns::server;
-use dns::stats::Stats;
-use dns::upstream::{UpstreamAddr, Upstreams};
+use hushdns::blocklist::Blocklist;
+use hushdns::cache::Cache;
+use hushdns::clients::Clients;
+use hushdns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
+use hushdns::handler::Handler;
+use hushdns::server;
+use hushdns::stats::Stats;
+use hushdns::upstream::{UpstreamAddr, Upstreams};
 
 const ANSWER: A = A(std::net::Ipv4Addr::new(192, 0, 2, 7));
 

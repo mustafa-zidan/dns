@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex};
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
 
-use dns::blocklist::Blocklist;
-use dns::cache::Cache;
-use dns::config::{BlockingConfig, CacheConfig, StatsConfig, UpstreamConfig};
-use dns::handler::{Handler, Peer, Transport};
-use dns::stats::Stats;
-use dns::upstream::Upstreams;
+use hushdns::blocklist::Blocklist;
+use hushdns::cache::Cache;
+use hushdns::config::{BlockingConfig, CacheConfig, StatsConfig, UpstreamConfig};
+use hushdns::handler::{Handler, Peer, Transport};
+use hushdns::stats::Stats;
+use hushdns::upstream::Upstreams;
 
 /// Collects what a subscriber writes.
 #[derive(Clone, Default)]
@@ -36,7 +36,7 @@ async fn logs_each_query_with_searchable_fields() {
     let subscriber = tracing_subscriber::fmt()
         .json()
         .flatten_event(true)
-        .with_env_filter("dns::query=debug")
+        .with_env_filter("hushdns::query=debug")
         .with_writer(move || writer.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
@@ -74,7 +74,7 @@ async fn logs_each_query_with_searchable_fields() {
         .collect();
     assert_eq!(lines.len(), 2, "{text}");
     let blocked = &lines[0];
-    assert_eq!(blocked["target"], "dns::query");
+    assert_eq!(blocked["target"], "hushdns::query");
     assert_eq!(blocked["message"], "query");
     assert_eq!(blocked["name"], "tracker.ads.example.com");
     assert_eq!(blocked["qtype"], "AAAA");

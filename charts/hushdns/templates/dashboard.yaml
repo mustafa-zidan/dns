@@ -3,20 +3,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "dns.dashboardName" . }}
+  name: {{ include "hushdns.dashboardName" . }}
   labels:
-    {{- include "dns.labels" . | nindent 4 }}
-    {{- include "dns.dashboardSelectorLabels" . | nindent 4 }}
+    {{- include "hushdns.labels" . | nindent 4 }}
+    {{- include "hushdns.dashboardSelectorLabels" . | nindent 4 }}
 spec:
   replicas: {{ $d.replicaCount }}
   selector:
     matchLabels:
-      {{- include "dns.dashboardSelectorLabels" . | nindent 6 }}
+      {{- include "hushdns.dashboardSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "dns.labels" . | nindent 8 }}
-        {{- include "dns.dashboardSelectorLabels" . | nindent 8 }}
+        {{- include "hushdns.labels" . | nindent 8 }}
+        {{- include "hushdns.dashboardSelectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -31,11 +31,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dashboard
-          image: {{ include "dns.image" (list $d.image .) }}
+          image: {{ include "hushdns.image" (list $d.image .) }}
           imagePullPolicy: {{ $d.image.pullPolicy }}
           env:
-            - name: DNS_API_URL
-              value: {{ include "dns.apiUrl" . | quote }}
+            - name: HUSHDNS_API_URL
+              value: {{ include "hushdns.apiUrl" . | quote }}
           ports:
             - name: http
               containerPort: 8080
@@ -86,13 +86,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "dns.dashboardName" . }}
+  name: {{ include "hushdns.dashboardName" . }}
   labels:
-    {{- include "dns.labels" . | nindent 4 }}
+    {{- include "hushdns.labels" . | nindent 4 }}
 spec:
   type: {{ $d.service.type }}
   selector:
-    {{- include "dns.dashboardSelectorLabels" . | nindent 4 }}
+    {{- include "hushdns.dashboardSelectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ $d.service.port }}
@@ -103,9 +103,9 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "dns.dashboardName" . }}
+  name: {{ include "hushdns.dashboardName" . }}
   labels:
-    {{- include "dns.labels" . | nindent 4 }}
+    {{- include "hushdns.labels" . | nindent 4 }}
   {{- with $d.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -127,7 +127,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "dns.dashboardName" $ }}
+                name: {{ include "hushdns.dashboardName" $ }}
                 port:
                   name: http
     {{- end }}

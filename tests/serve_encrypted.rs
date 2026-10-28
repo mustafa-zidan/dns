@@ -17,15 +17,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-use dns::blocklist::Blocklist;
-use dns::cache::Cache;
-use dns::certs::CertStore;
-use dns::clients::Clients;
-use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
-use dns::handler::Handler;
-use dns::stats::Stats;
-use dns::upstream::{UpstreamAddr, Upstreams};
-use dns::{doh, padding, server};
+use hushdns::blocklist::Blocklist;
+use hushdns::cache::Cache;
+use hushdns::certs::CertStore;
+use hushdns::clients::Clients;
+use hushdns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
+use hushdns::handler::Handler;
+use hushdns::stats::Stats;
+use hushdns::upstream::{UpstreamAddr, Upstreams};
+use hushdns::{doh, padding, server};
 
 const ANSWER: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 53);
 const IDLE: Duration = Duration::from_secs(5);

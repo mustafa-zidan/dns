@@ -1,15 +1,16 @@
 apiVersion: v2
-name: dns
+name: hushdns
 description: An ad-blocking, privacy-focused DNS server, with its web dashboard.
 type: application
 version: 0.1.0
 # The image tag used when image.tag is empty.
 appVersion: "0.1.0"
-home: https://github.com/mustafa-zidan/dns
+home: https://github.com/mustafa-zidan/hushdns
 sources:
-  - https://github.com/mustafa-zidan/dns
+  - https://github.com/mustafa-zidan/hushdns
 keywords:
   - dns
+  - adblocker
   - adblock
   - privacy
   - dns-over-https

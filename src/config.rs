@@ -451,8 +451,8 @@ mod tests {
         let config = Config::parse(
             r#"
             [tls]
-            cert_file = "/etc/dns/tls/fullchain.pem"
-            key_file = "/etc/dns/tls/privkey.pem"
+            cert_file = "/etc/hushdns/tls/fullchain.pem"
+            key_file = "/etc/hushdns/tls/privkey.pem"
             dot_listen = ["0.0.0.0:853"]
             doh_listen = ["0.0.0.0:443"]
             "#,
@@ -466,8 +466,8 @@ mod tests {
     #[test]
     fn sample_configs_parse() {
         for text in [
-            include_str!("../config/dns.toml"),
-            include_str!("../examples/compose/dns.toml"),
+            include_str!("../config/hushdns.toml"),
+            include_str!("../examples/compose/hushdns.toml"),
         ] {
             Config::parse(text).unwrap();
         }

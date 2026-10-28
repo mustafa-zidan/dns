@@ -5,18 +5,18 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked \
-    && cp target/release/dns /usr/local/bin/dns
+    && cp target/release/hushdns /usr/local/bin/hushdns
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
-LABEL org.opencontainers.image.title="dns" \
+LABEL org.opencontainers.image.title="hushdns" \
       org.opencontainers.image.description="An ad-blocking, privacy-focused DNS server" \
-      org.opencontainers.image.source="https://github.com/mustafa-zidan/dns" \
+      org.opencontainers.image.source="https://github.com/mustafa-zidan/hushdns" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
-COPY --from=builder /usr/local/bin/dns /usr/local/bin/dns
-COPY config/dns.toml /etc/dns/dns.toml
-ENV DNS_CONFIG=/etc/dns/dns.toml
+COPY --from=builder /usr/local/bin/hushdns /usr/local/bin/hushdns
+COPY config/hushdns.toml /etc/hushdns/hushdns.toml
+ENV HUSHDNS_CONFIG=/etc/hushdns/hushdns.toml
 # Docker lets unprivileged users bind ports below 1024 inside the container,
 # so the server can listen on 53 without running as root.
 EXPOSE 53/udp 53/tcp 853/tcp 443/tcp
 USER nonroot
-ENTRYPOINT ["/usr/local/bin/dns"]
+ENTRYPOINT ["/usr/local/bin/hushdns"]

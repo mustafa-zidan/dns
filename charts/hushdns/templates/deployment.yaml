@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "dns.fullname" . }}
+  name: {{ include "hushdns.fullname" . }}
   labels:
-    {{- include "dns.labels" . | nindent 4 }}
-    {{- include "dns.selectorLabels" . | nindent 4 }}
+    {{- include "hushdns.labels" . | nindent 4 }}
+    {{- include "hushdns.selectorLabels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "dns.selectorLabels" . | nindent 6 }}
+      {{- include "hushdns.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -20,8 +20,8 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "dns.labels" . | nindent 8 }}
-        {{- include "dns.selectorLabels" . | nindent 8 }}
+        {{- include "hushdns.labels" . | nindent 8 }}
+        {{- include "hushdns.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -44,10 +44,10 @@ spec:
           - name: net.ipv4.ip_unprivileged_port_start
             value: "0"
       containers:
-        - name: dns
-          image: {{ include "dns.image" (list .Values.image .) }}
+        - name: hushdns
+          image: {{ include "hushdns.image" (list .Values.image .) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/dns/dns.toml"]
+          args: ["--config", "/etc/hushdns/hushdns.toml"]
           env:
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}
@@ -95,24 +95,24 @@ spec:
           {{- end }}
           volumeMounts:
             - name: config
-              mountPath: /etc/dns/dns.toml
-              subPath: dns.toml
+              mountPath: /etc/hushdns/hushdns.toml
+              subPath: hushdns.toml
               readOnly: true
             {{- if .Values.tls.enabled }}
             # Mounted as a directory, not with subPath, so a renewed
             # certificate shows up in the running pod.
             - name: tls
-              mountPath: /etc/dns/tls
+              mountPath: /etc/hushdns/tls
               readOnly: true
             {{- end }}
       volumes:
         - name: config
           secret:
-            secretName: {{ include "dns.configSecret" . }}
+            secretName: {{ include "hushdns.configSecret" . }}
         {{- if .Values.tls.enabled }}
         - name: tls
           secret:
-            secretName: {{ include "dns.tlsSecret" . }}
+            secretName: {{ include "hushdns.tlsSecret" . }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -1,7 +1,7 @@
-# Values for the dns chart. Every key is optional.
+# Values for the hushdns chart. Every key is optional.
 
 image:
-  repository: ghcr.io/mustafa-zidan/dns
+  repository: ghcr.io/mustafa-zidan/hushdns
   # Defaults to the chart's appVersion.
   tag: ""
   # Pin an image by digest (sha256:...). Wins over tag when set.
@@ -16,8 +16,8 @@ fullnameOverride: ""
 # one replica the dashboard shows whichever pod answers. One is usually enough.
 replicaCount: 1
 
-# The server's config file, written as dns.toml. It takes the same keys as
-# config/dns.toml in the repository. The chart fills in the listeners, the
+# The server's config file, written as hushdns.toml. It takes the same keys as
+# config/hushdns.toml in the repository. The chart fills in the listeners, the
 # API token and the certificate paths, so leave those out.
 config:
   upstream:
@@ -40,7 +40,7 @@ config:
   #         to: "07:00"
   #         block_all: true
 
-# Use your own Secret with a dns.toml key instead of the generated config.
+# Use your own Secret with a hushdns.toml key instead of the generated config.
 # The chart's config, token and TLS settings are then ignored.
 existingConfigSecret: ""
 
@@ -104,7 +104,7 @@ tls:
 dashboard:
   enabled: true
   image:
-    repository: ghcr.io/mustafa-zidan/dns-dashboard
+    repository: ghcr.io/mustafa-zidan/hushdns-dashboard
     tag: ""
     digest: ""
     pullPolicy: IfNotPresent
@@ -141,7 +141,7 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Extra environment for the server, such as DNS_LOG.
+# Extra environment for the server, such as HUSHDNS_LOG.
 env:
-  DNS_LOG_FORMAT: json
-  # DNS_LOG: "info,dns::query=debug"
+  HUSHDNS_LOG_FORMAT: json
+  # HUSHDNS_LOG: "info,hushdns::query=debug"

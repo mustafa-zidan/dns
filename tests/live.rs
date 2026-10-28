@@ -4,8 +4,8 @@
 use hickory_proto::op::{Edns, Message, Query, ResponseCode};
 use hickory_proto::rr::{Name, RecordType};
 
-use dns::config::UpstreamConfig;
-use dns::upstream::Upstreams;
+use hushdns::config::UpstreamConfig;
+use hushdns::upstream::Upstreams;
 
 #[tokio::test]
 #[ignore = "needs internet access"]

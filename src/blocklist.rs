@@ -195,7 +195,7 @@ impl Blocklist {
     pub fn new(config: BlockingConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
-            .user_agent(concat!("dns/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("hushdns/", env!("CARGO_PKG_VERSION")))
             .build()?;
         let blocklist = Self {
             rules: ArcSwap::default(),

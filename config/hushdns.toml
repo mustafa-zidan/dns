@@ -13,8 +13,8 @@ tcp_idle_timeout_secs = 10
 # DNS-over-TLS and DNS-over-HTTPS for your own devices. Off until you list an
 # address. Both need a PEM certificate chain and private key for the name your
 # devices connect to.
-# cert_file = "/etc/dns/tls/fullchain.pem"
-# key_file = "/etc/dns/tls/privkey.pem"
+# cert_file = "/etc/hushdns/tls/fullchain.pem"
+# key_file = "/etc/hushdns/tls/privkey.pem"
 # dot_listen = ["0.0.0.0:853"]
 # doh_listen = ["0.0.0.0:443"]
 doh_path = "/dns-query"

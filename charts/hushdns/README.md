@@ -1,15 +1,15 @@
-# dns Helm chart
+# hushdns Helm chart
 
-Runs the [dns](https://github.com/mustafa-zidan/dns) ad-blocking DNS server and its web dashboard on Kubernetes. Everything is set through values, including the server's own config, so there's no config file to manage by hand.
+Runs the [hushdns](https://github.com/mustafa-zidan/hushdns) ad-blocking DNS server and its web dashboard on Kubernetes. Everything is set through values, including the server's own config, so there's no config file to manage by hand.
 
 ```sh
-helm install dns oci://ghcr.io/mustafa-zidan/charts/dns -f my-values.yaml
+helm install hushdns oci://ghcr.io/mustafa-zidan/charts/hushdns -f my-values.yaml
 ```
 
 ## What it creates
 
 - A Deployment and Service for the server. The Service serves DNS on port 53 (UDP and TCP), plus DNS-over-TLS on 853 and DNS-over-HTTPS on 443 when TLS is on.
-- A Secret holding the rendered `dns.toml` and the API token.
+- A Secret holding the rendered `hushdns.toml` and the API token.
 - A ClusterIP Service for the API, with an optional Ingress.
 - A Deployment, Service and optional Ingress for the dashboard.
 - A cert-manager Certificate, when you ask for one.
@@ -30,7 +30,7 @@ service:
 
 ## Server config
 
-`config` takes the same keys as [`config/dns.toml`](../../config/dns.toml), written as YAML. The chart fills in the listeners, the API token and the certificate paths, so leave those out.
+`config` takes the same keys as [`config/hushdns.toml`](../../config/hushdns.toml), written as YAML. The chart fills in the listeners, the API token and the certificate paths, so leave those out.
 
 ```yaml
 config:
@@ -51,21 +51,21 @@ config:
           block_all: true
 ```
 
-To manage the whole file yourself, put it in a Secret under the `dns.toml` key and set `existingConfigSecret`.
+To manage the whole file yourself, put it in a Secret under the `hushdns.toml` key and set `existingConfigSecret`.
 
 ## API token and dashboard
 
 The API always needs a token in the cluster. Set `api.token`, or let the chart generate one, which it keeps across upgrades. Read it with:
 
 ```sh
-kubectl get secret dns -o jsonpath='{.data.api-token}' | base64 -d; echo
+kubectl get secret hushdns -o jsonpath='{.data.api-token}' | base64 -d; echo
 ```
 
 The dashboard runs in your browser and calls the API directly, so the browser has to reach both. With no ingress, port-forward both and open <http://localhost:8080>:
 
 ```sh
-kubectl port-forward service/dns-dashboard 8080:8080 &
-kubectl port-forward service/dns-api 8053:8053 &
+kubectl port-forward service/hushdns-dashboard 8080:8080 &
+kubectl port-forward service/hushdns-api 8053:8053 &
 ```
 
 With ingress, give each one a host. The chart points the dashboard at the API's host and adds the dashboard's host to the API's allowed origins:
@@ -80,7 +80,7 @@ dashboard:
   ingress:
     enabled: true
     hosts: [dns.example.com]
-    tls: [{secretName: dns-dashboard-tls, hosts: [dns.example.com]}]
+    tls: [{secretName: hushdns-dashboard-tls, hosts: [dns.example.com]}]
 ```
 
 ## DNS-over-TLS and DNS-over-HTTPS
@@ -100,7 +100,7 @@ The certificate is mounted as a directory, so a renewal reaches the running pod 
 
 ## Logs
 
-Logs are JSON by default (`env.DNS_LOG_FORMAT`). Add `DNS_LOG: "info,dns::query=debug"` under `env` for one log line per query. The repository README lists the fields.
+Logs are JSON by default (`env.HUSHDNS_LOG_FORMAT`). Add `HUSHDNS_LOG: "info,hushdns::query=debug"` under `env` for one log line per query. The repository README lists the fields.
 
 ## Values
 
