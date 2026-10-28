@@ -1,0 +1,147 @@
+# Values for the dns chart. Every key is optional.
+
+image:
+  repository: ghcr.io/mustafa-zidan/dns
+  # Defaults to the chart's appVersion.
+  tag: ""
+  # Pin an image by digest (sha256:...). Wins over tag when set.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Stats, pauses and the cache live in each pod's memory, so with more than
+# one replica the dashboard shows whichever pod answers. One is usually enough.
+replicaCount: 1
+
+# The server's config file, written as dns.toml. It takes the same keys as
+# config/dns.toml in the repository. The chart fills in the listeners, the
+# API token and the certificate paths, so leave those out.
+config:
+  upstream:
+    servers:
+      - "tls://1.1.1.1#cloudflare-dns.com"
+      - "tls://9.9.9.9#dns.quad9.net"
+  blocking:
+    lists:
+      - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+      - "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
+  # server:
+  #   timezone: "Europe/Berlin"
+  # clients:
+  #   - name: kids
+  #     addresses: ["192.168.1.20", "192.168.1.64/28"]
+  #     denylist: ["youtube.com"]
+  #     schedules:
+  #       - days: ["sun", "mon", "tue", "wed", "thu"]
+  #         from: "21:00"
+  #         to: "07:00"
+  #         block_all: true
+
+# Use your own Secret with a dns.toml key instead of the generated config.
+# The chart's config, token and TLS settings are then ignored.
+existingConfigSecret: ""
+
+api:
+  # The HTTP API the dashboard calls.
+  enabled: true
+  # Bearer token for the API. Left empty, the chart generates one and keeps
+  # it across upgrades. Read it with the command in the install notes.
+  token: ""
+  # Extra web origins allowed to call the API from a browser. The
+  # dashboard's ingress hosts, and http://localhost:8080 for port-forwarding,
+  # are added on their own.
+  corsOrigins: []
+  service:
+    type: ClusterIP
+    port: 8053
+  # The browser calls the API directly, so to use the dashboard from outside
+  # the cluster, expose the API too.
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    #  - api.dns.example.com
+    tls: []
+    #  - secretName: dns-api-tls
+    #    hosts: [api.dns.example.com]
+
+service:
+  # LoadBalancer or NodePort to serve devices outside the cluster.
+  type: ClusterIP
+  # Local keeps client source addresses, which per-client rules need.
+  # Applies to LoadBalancer and NodePort services.
+  externalTrafficPolicy: Local
+  # Set a fixed address, if your load balancer supports it.
+  loadBalancerIP: ""
+  annotations: {}
+  ports:
+    dns: 53
+    dot: 853
+    doh: 443
+
+# DNS-over-TLS and DNS-over-HTTPS for your devices.
+tls:
+  enabled: false
+  dot: true
+  doh: true
+  dohPath: /dns-query
+  # A kubernetes.io/tls Secret with the certificate. The server picks up a
+  # renewed certificate without a restart.
+  secretName: ""
+  # Or let cert-manager issue one.
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+    dnsNames: []
+    #  - dns.example.com
+
+dashboard:
+  enabled: true
+  image:
+    repository: ghcr.io/mustafa-zidan/dns-dashboard
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # The API as the browser reaches it, such as https://api.dns.example.com.
+  # Defaults to the first API ingress host, or to http://localhost:8053 for
+  # port-forwarding when the API has no ingress.
+  apiUrl: ""
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    #  - dns.example.com
+    tls: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+resources: {}
+  # requests:
+  #   cpu: 50m
+  #   memory: 64Mi
+  # limits:
+  #   memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment for the server, such as DNS_LOG.
+env:
+  DNS_LOG_FORMAT: json
+  # DNS_LOG: "info,dns::query=debug"

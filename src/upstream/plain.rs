@@ -16,7 +16,7 @@ pub async fn exchange(server: &UpstreamAddr, query: &Message) -> Result<Message>
         UpstreamAddr::Udp(addr) => {
             let response = udp_exchange(*addr, &bytes, query).await?;
             if response.truncation {
-                debug!(%addr, "truncated upstream answer, retrying over TCP");
+                debug!(upstream = %addr, "truncated upstream answer, retrying over TCP");
                 return tcp_exchange(*addr, &bytes, query).await;
             }
             Ok(response)
@@ -42,8 +42,8 @@ async fn udp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result
         let len = socket.recv(&mut buf).await?;
         match Message::from_vec(&buf[..len]) {
             Ok(response) if is_response_to(&response, query) => return Ok(response),
-            Ok(_) => debug!(%addr, "ignoring mismatched upstream answer"),
-            Err(e) => debug!(%addr, error = %e, "ignoring malformed upstream answer"),
+            Ok(_) => debug!(upstream = %addr, "ignoring mismatched upstream answer"),
+            Err(e) => debug!(upstream = %addr, error = %e, "ignoring malformed upstream answer"),
         }
     }
 }
@@ -52,7 +52,7 @@ async fn tcp_exchange(addr: SocketAddr, bytes: &[u8], query: &Message) -> Result
     let mut stream = TcpStream::connect(addr).await?;
     match stream_exchange(&mut stream, bytes, query).await {
         Err(e) if closed_early(&e) => {
-            debug!(%addr, error = %e, "upstream closed the connection early, retrying once");
+            debug!(upstream = %addr, error = %e, "upstream closed the connection early, retrying once");
             let mut stream = TcpStream::connect(addr).await?;
             stream_exchange(&mut stream, bytes, query).await
         }

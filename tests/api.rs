@@ -13,7 +13,7 @@ use dns::blocklist::Blocklist;
 use dns::cache::Cache;
 use dns::clients::Clients;
 use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
-use dns::handler::Handler;
+use dns::handler::{Handler, Peer, Transport};
 use dns::stats::Stats;
 use dns::upstream::Upstreams;
 
@@ -32,7 +32,17 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
         denylist: vec!["ads.example.com".into()],
         ..BlockingConfig::default()
     };
-    let blocklist = Arc::new(Blocklist::new(blocking.clone()).unwrap());
+    let clients = Config::parse(
+        "[[clients]]\nname = \"kids\"\naddresses = [\"192.168.1.0/24\"]\ndenylist = [\"video.example\"]",
+    )
+    .unwrap()
+    .clients;
+    let clients = Arc::new(Clients::new(&clients, None).unwrap());
+    let blocklist = Arc::new(
+        Blocklist::new(blocking.clone())
+            .unwrap()
+            .with_clients(clients),
+    );
     let cache = Arc::new(Cache::new(CacheConfig::default()));
     let stats = Arc::new(Stats::new(&StatsConfig::default()));
     // Nothing listens on the discard port, so forwarded queries fail fast.
@@ -52,13 +62,6 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
 
     let state = ApiState {
         blocklist,
-        clients: Arc::new(Clients::new(
-            &Config::parse(
-                "[[clients]]\nname = \"kids\"\naddresses = [\"192.168.1.0/24\"]\ndenylist = [\"video.example\"]",
-            )
-            .unwrap()
-            .clients,
-        )),
         cache,
         stats,
         token: token.map(Arc::from),
@@ -75,7 +78,10 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
     }
 }
 
-const LOCAL: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+const LOCAL: Peer = Peer {
+    ip: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    transport: Transport::Udp,
+};
 
 fn query(name: &str) -> Message {
     let mut msg = Message::new(7, MessageType::Query, OpCode::Query);
@@ -351,4 +357,34 @@ async fn rejects_rebound_hosts_and_cross_site_requests() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn lists_and_pauses_client_groups() {
+    let api = start(None).await;
+    let clients = api.get("/api/clients").await;
+    let kids = &clients["groups"][0];
+    assert_eq!(kids["name"], "kids");
+    assert_eq!(kids["addresses"], json!(["192.168.1.0/24"]));
+    assert_eq!(kids["denylist"], 1);
+    assert_eq!(kids["paused_for_secs"], Value::Null);
+    assert_eq!(clients["now"].as_str().unwrap().len(), 16);
+
+    let check = "/api/check?name=video.example&client=192.168.1.20";
+    let paused = api
+        .put("/api/clients/kids", json!({"pause_secs": 60}))
+        .await;
+    assert_eq!(paused.status(), 200);
+    let paused: Value = paused.json().await.unwrap();
+    assert!(paused["paused_for_secs"].as_u64().unwrap() > 50);
+    assert_eq!(api.get(check).await["blocked"], false);
+
+    let resumed = api.put("/api/clients/kids", json!({"pause_secs": 0})).await;
+    assert_eq!(resumed.status(), 200);
+    assert_eq!(api.get(check).await["blocked"], true);
+
+    let missing = api
+        .put("/api/clients/nobody", json!({"pause_secs": 0}))
+        .await;
+    assert_eq!(missing.status(), 404);
 }

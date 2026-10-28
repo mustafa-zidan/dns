@@ -5,6 +5,9 @@
 # Each address is served over both UDP and TCP.
 listen = ["0.0.0.0:53"]
 tcp_idle_timeout_secs = 10
+# Time zone for client schedules, such as "Europe/Berlin". (Default: the
+# system's zone, from the TZ variable or /etc/localtime; UTC in the image.)
+# timezone = "Europe/Berlin"
 
 [tls]
 # DNS-over-TLS and DNS-over-HTTPS for your own devices. Off until you list an
@@ -69,6 +72,21 @@ refresh_interval_secs = 86400
 # denylist = ["youtube.com"]
 # # Never blocked for this group. Wins over everything else.
 # allowlist = []
+# # Extra blocklists for this group, refreshed with the shared ones.
+# lists = ["https://example.com/social-media.txt"]
+#
+# # A time window with extra rules. Repeat for more windows.
+# [[clients.schedules]]
+# # Days the window starts on. (Default: every day.)
+# days = ["sun", "mon", "tue", "wed", "thu"]
+# # HH:MM in server.timezone. A window that ends before it starts runs past
+# # midnight.
+# from = "21:00"
+# to = "07:00"
+# # Block everything except the group's allowlist,
+# block_all = true
+# # or only these domains.
+# denylist = []
 
 [api]
 # HTTP API for stats and runtime control (see the README for endpoints).

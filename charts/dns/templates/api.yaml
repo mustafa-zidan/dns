@@ -1,0 +1,51 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dns.fullname" . }}-api
+  labels:
+    {{- include "dns.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    {{- include "dns.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: api
+      port: {{ .Values.api.service.port }}
+      targetPort: api
+      protocol: TCP
+{{- if .Values.api.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "dns.fullname" . }}-api
+  labels:
+    {{- include "dns.labels" . | nindent 4 }}
+  {{- with .Values.api.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.api.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.api.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.api.ingress.hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "dns.fullname" $ }}-api
+                port:
+                  name: api
+    {{- end }}
+{{- end }}
+{{- end }}

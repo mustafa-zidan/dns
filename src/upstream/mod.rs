@@ -269,11 +269,11 @@ impl Upstreams {
             match timeout(self.timeout, server.exchange(query)).await {
                 Ok(Ok(response)) => return Ok(response),
                 Ok(Err(e)) => {
-                    warn!(server = %server.addr, error = %format!("{e:#}"), "upstream query failed");
+                    warn!(upstream = %server.addr, error = %format!("{e:#}"), "upstream query failed");
                     last_err = e;
                 }
                 Err(_) => {
-                    warn!(server = %server.addr, "upstream query timed out");
+                    warn!(upstream = %server.addr, "upstream query timed out");
                     last_err = anyhow!("timed out querying {}", server.addr);
                 }
             }

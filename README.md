@@ -70,6 +70,17 @@ The container user must be able to read the key file. Let's Encrypt's `live` dir
 
 Responses to padded queries are padded to 468-byte blocks (RFC 8467). DoH answers carry a `Cache-Control: max-age` equal to their smallest TTL.
 
+## Running on Kubernetes
+
+A Helm chart in [`charts/dns`](charts/dns/) runs the server and the dashboard. Everything goes through `values.yaml`, including the server's config, so there's no separate config file to manage:
+
+```sh
+helm install dns oci://ghcr.io/mustafa-zidan/charts/dns \
+  --set service.type=LoadBalancer
+```
+
+Until the first release is tagged, install from a checkout with `helm install dns ./charts/dns --set image.tag=latest --set dashboard.image.tag=latest`. See the [chart's README](charts/dns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+
 ## Running from source
 
 ```sh
@@ -82,7 +93,29 @@ Binding port 53 usually needs root or `CAP_NET_BIND_SERVICE`; for local testing 
 
 Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` environment variable. Every key is optional. See [`config/dns.toml`](config/dns.toml) for all options and their defaults.
 
-Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), for example `DNS_LOG=dns=debug` to see each blocked name and cache hit.
+## Logs
+
+Logs go to standard output. `DNS_LOG` picks what is logged, using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), and defaults to `info`. `DNS_LOG_FORMAT=json` (or `--log-format json`) writes one JSON object per line, ready for Loki, Elasticsearch, `jq` or `kubectl logs | jq`. The default is plain text.
+
+Nothing is logged per query unless you ask for it. `DNS_LOG=info,dns::query=debug` adds one `query` event for every query, always with the same fields:
+
+| Field | Example |
+|---|---|
+| `name` | `tracker.ads.example.com` |
+| `qtype` | `AAAA` |
+| `outcome` | `blocked`, `cached`, `forwarded`, `failed` or `invalid` |
+| `rcode` | `NoError`, `NXDomain`, `ServFail` |
+| `rule` | the rule that blocked it, `*` for a schedule that blocks everything |
+| `client_ip` | `192.168.1.20` |
+| `client_group` | the `[[clients]]` group whose rules blocked it |
+| `transport` | `udp`, `tcp`, `dot` or `doh` |
+| `duration_ms` | `0.13` |
+
+```sh
+docker logs dns | jq 'select(.outcome == "blocked") | .name' | sort | uniq -c | sort -rn
+```
+
+Other events use the same names where they apply: `client_ip` and `transport` for connections, `upstream` for upstream servers, `list` for blocklists, `listen` for listeners and `error` for errors. Per-query logs record who looked up what, so turn them on only when you need them.
 
 ## Dashboard
 
@@ -91,8 +124,9 @@ The dashboard is a separate web app in [`web/`](web/), published as its own imag
 - query counts and the share that was blocked
 - the top queried and top blocked domains
 - the state of each blocklist
+- each client group, with its rules, list status and schedules, and which schedules are open now
 
-From it you can turn blocking off or pause it, check whether a domain is blocked, reload the lists, clear the cache and reset the stats.
+From it you can turn blocking off or pause it, pause one client group's rules for an hour, check whether a domain is blocked (optionally for a given client address), reload the lists, clear the cache and reset the stats.
 
 ![Dashboard](docs/dashboard.png)
 
@@ -126,6 +160,15 @@ Groups in `[[clients]]` match queries by source address and change what gets blo
 name = "kids"
 addresses = ["192.168.1.20", "192.168.1.64/28"]
 denylist = ["youtube.com", "tiktok.com"]
+allowlist = ["school.example"]
+lists = ["https://example.com/social-media.txt"]
+
+# Bedtime: on school nights, block everything but the allowlist.
+[[clients.schedules]]
+days = ["sun", "mon", "tue", "wed", "thu"]
+from = "21:00"
+to = "07:00"
+block_all = true
 
 [[clients]]
 name = "work-laptop"
@@ -134,7 +177,11 @@ blocklists = false   # skip the shared lists; this group's own rules still apply
 allowlist = []
 ```
 
-For a query from a group's address, the group's allowlist is checked first, then its denylist, then the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins. Turning blocking off or pausing it through the API turns off client rules too. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
+For a query from a group's address, the group's allowlist is checked first, then any schedule that is open right now, then the group's denylist and its own `lists`, and last the shared `[blocking]` rules unless `blocklists = false`. When an address is in several groups, the most specific network wins.
+
+A schedule opens on the days listed and runs from `from` to `to`. One that ends before it starts runs past midnight, so the bedtime above covers Thursday night into Friday morning but not Friday night. Times are in `server.timezone`, or the system's zone when it's unset. The Docker image runs in UTC, so set `server.timezone` there.
+
+A group's own `lists` load and refresh along with the shared ones, in the same formats. Turning blocking off or pausing it through the API turns off client rules too. You can also pause just one group's rules, so its devices get only the shared rules for a while, from the dashboard or with `PUT /api/clients/<name>`. `/api/check?name=youtube.com&client=192.168.1.20` shows the answer for one client.
 
 The server sees the address the query arrives from. Behind NAT or a DNS proxy, every device looks like that box. In Docker, the published UDP and TCP ports usually keep client addresses, but if every query appears to come from the Docker gateway, run the container with `--network host`.
 
@@ -151,6 +198,8 @@ The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.tok
 | PUT | `/api/blocking` | `{"enabled": false}` turns blocking off, `{"enabled": false, "pause_secs": 300}` pauses it for 5 minutes, `{"enabled": true}` turns it back on |
 | POST | `/api/blocking/reload` | Re-download the blocklists now |
 | GET | `/api/check?name=ads.example.com` | Whether a name is blocked, and by which rule. Add `&client=<ip>` to apply that client's group |
+| GET | `/api/clients` | Client groups with their rule counts, list status, schedules (and whether each is open now) and pause state |
+| PUT | `/api/clients/<name>` | `{"pause_secs": 1800}` gives the group only the shared rules for 30 minutes, `{"pause_secs": 0}` resumes |
 | GET | `/api/cache` | Number of cached answers |
 | DELETE | `/api/cache` | Empty the cache |
 
@@ -166,8 +215,9 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Per-client blocklist URLs and schedules, such as bedtime rules.
-- Managing client groups from the dashboard.
+- Creating and editing client groups from the dashboard, saved across restarts. Today the dashboard shows groups and pauses them, and groups are defined in the config.
+- DNSSEC validation.
+- An opt-in query history that survives restarts.
 
 ## Development
 

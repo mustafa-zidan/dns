@@ -1,14 +1,14 @@
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use hickory_proto::op::{Edns, Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
 use tracing::{debug, warn};
 
-use crate::blocklist::{Blocklist, Verdict};
+use crate::blocklist::Blocklist;
 use crate::cache::{Cache, CacheKey};
-use crate::clients::{self, Clients};
 use crate::config::{BlockMode, BlockingConfig};
 use crate::stats::{Outcome, Stats};
 use crate::upstream::Upstreams;
@@ -16,12 +16,56 @@ use crate::upstream::Upstreams;
 /// EDNS payload size we advertise, per the DNS Flag Day 2020 recommendation.
 const EDNS_PAYLOAD: u16 = 1232;
 
+/// How a query reached the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Udp,
+    Tcp,
+    /// DNS-over-TLS.
+    Dot,
+    /// DNS-over-HTTPS.
+    Doh,
+}
+
+impl Transport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Transport::Udp => "udp",
+            Transport::Tcp => "tcp",
+            Transport::Dot => "dot",
+            Transport::Doh => "doh",
+        }
+    }
+}
+
+/// Who sent a query, and how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Peer {
+    pub ip: IpAddr,
+    pub transport: Transport,
+}
+
+impl Peer {
+    pub fn new(ip: IpAddr, transport: Transport) -> Self {
+        Self { ip, transport }
+    }
+}
+
+/// What [`Handler::answer`] decided, for stats and the query log.
+struct Answered {
+    response: Message,
+    outcome: Outcome,
+    /// The rule that blocked the query.
+    rule: Option<String>,
+    /// The client group whose rules blocked it.
+    group: Option<String>,
+}
+
 /// Turns a client query into a response: blocklist, then cache, then upstream.
 pub struct Handler {
     blocklist: Arc<Blocklist>,
     block_mode: BlockMode,
     blocked_ttl: u32,
-    clients: Arc<Clients>,
     cache: Arc<Cache>,
     upstreams: Upstreams,
     stats: Arc<Stats>,
@@ -39,26 +83,26 @@ impl Handler {
             blocklist,
             block_mode: blocking.mode,
             blocked_ttl: blocking.blocked_ttl,
-            clients: Arc::default(),
             cache,
             upstreams,
             stats,
         }
     }
 
-    /// Applies per-client rules, matched by the query's source address.
-    pub fn with_clients(mut self, clients: Arc<Clients>) -> Self {
-        self.clients = clients;
-        self
-    }
-
-    /// Handles one wire-format query from `client`. Returns `None` when the
+    /// Handles one wire-format query from `peer`. Returns `None` when the
     /// bytes are too broken to even answer with FORMERR.
-    pub async fn handle_bytes(&self, bytes: &[u8], client: IpAddr) -> Option<Message> {
+    pub async fn handle_bytes(&self, bytes: &[u8], peer: Peer) -> Option<Message> {
         match Message::from_vec(bytes) {
-            Ok(request) => Some(self.handle(&request, client).await),
+            Ok(request) => Some(self.handle(&request, peer).await),
             Err(e) => {
-                debug!(error = %e, "malformed query");
+                debug!(
+                    target: "dns::query",
+                    client_ip = %peer.ip,
+                    transport = peer.transport.as_str(),
+                    outcome = Outcome::Invalid.as_str(),
+                    error = %e,
+                    "malformed query"
+                );
                 self.stats.record(None, Outcome::Invalid);
                 let id = u16::from_be_bytes([*bytes.first()?, *bytes.get(1)?]);
                 Some(Message::error_msg(id, OpCode::Query, ResponseCode::FormErr))
@@ -66,40 +110,67 @@ impl Handler {
         }
     }
 
-    pub async fn handle(&self, request: &Message, client: IpAddr) -> Message {
-        let invalid = |code| {
-            self.stats.record(None, Outcome::Invalid);
-            error_response(request, code)
+    /// Answers one query, counts it, and logs it on the `dns::query` target
+    /// at debug level, with the same field names every time so the log can
+    /// be searched.
+    pub async fn handle(&self, request: &Message, peer: Peer) -> Message {
+        let started = Instant::now();
+        let name = request.queries.first().map(|q| {
+            let ascii = q.name().to_lowercase().to_ascii();
+            ascii.trim_end_matches('.').to_string()
+        });
+        let answered = self.answer(request, peer, name.as_deref()).await;
+        let counted = (answered.outcome != Outcome::Invalid)
+            .then_some(name.as_deref())
+            .flatten();
+        self.stats.record(counted, answered.outcome);
+        debug!(
+            target: "dns::query",
+            name = name.as_deref(),
+            qtype = request.queries.first().map(|q| q.query_type().to_string()),
+            outcome = answered.outcome.as_str(),
+            rcode = ?answered.response.response_code,
+            rule = answered.rule.as_deref(),
+            client_ip = %peer.ip,
+            client_group = answered.group.as_deref(),
+            transport = peer.transport.as_str(),
+            duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "query"
+        );
+        answered.response
+    }
+
+    async fn answer(&self, request: &Message, peer: Peer, lookup: Option<&str>) -> Answered {
+        let done = |response, outcome| Answered {
+            response,
+            outcome,
+            rule: None,
+            group: None,
         };
+        let invalid = |code| done(error_response(request, code), Outcome::Invalid);
         if request.message_type != MessageType::Query {
             return invalid(ResponseCode::FormErr);
         }
         if request.op_code != OpCode::Query {
             return invalid(ResponseCode::NotImp);
         }
-        let [query] = request.queries.as_slice() else {
+        let ([query], Some(lookup)) = (request.queries.as_slice(), lookup) else {
             return invalid(ResponseCode::FormErr);
         };
 
-        let mut name = query.name().to_lowercase();
-        name.set_fqdn(true);
-        let ascii = name.to_ascii();
-        let lookup = ascii.trim_end_matches('.');
-
-        if self.blocklist.enabled() {
-            let group = self.clients.lookup(client);
-            if let Verdict::Blocked(rule) = clients::check(&self.blocklist.rules(), group, lookup) {
-                debug!(
-                    name = lookup,
-                    rule,
-                    client = group.map(|g| g.name.as_str()),
-                    "blocked"
-                );
-                self.stats.record(Some(lookup), Outcome::Blocked);
-                return self.blocked_response(request, query);
-            }
+        if self.blocklist.enabled()
+            && let Some((rule, group)) = self.blocklist.blocked_by(lookup, Some(peer.ip))
+        {
+            return Answered {
+                response: self.blocked_response(request, query),
+                outcome: Outcome::Blocked,
+                rule: Some(rule),
+                group: group.map(str::to_string),
+            };
         }
 
+        let mut name = query.name().to_lowercase();
+        name.set_fqdn(true);
         let dnssec_ok = request.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
         let key = CacheKey {
             name,
@@ -110,9 +181,7 @@ impl Handler {
         };
 
         if let Some(cached) = self.cache.get(&key).await {
-            debug!(name = lookup, qtype = %query.query_type(), "cache hit");
-            self.stats.record(Some(lookup), Outcome::Cached);
-            return finish(request, cached);
+            return done(finish(request, cached), Outcome::Cached);
         }
 
         match self
@@ -122,13 +191,14 @@ impl Handler {
         {
             Ok(response) => {
                 self.cache.insert(key, &response).await;
-                self.stats.record(Some(lookup), Outcome::Forwarded);
-                finish(request, response)
+                done(finish(request, response), Outcome::Forwarded)
             }
             Err(e) => {
                 warn!(name = lookup, error = %format!("{e:#}"), "all upstreams failed");
-                self.stats.record(Some(lookup), Outcome::Failed);
-                error_response(request, ResponseCode::ServFail)
+                done(
+                    error_response(request, ResponseCode::ServFail),
+                    Outcome::Failed,
+                )
             }
         }
     }
@@ -221,7 +291,10 @@ mod tests {
 
     use hickory_proto::rr::Name;
 
-    const LOCAL: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    const LOCAL: Peer = Peer {
+        ip: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        transport: Transport::Udp,
+    };
 
     fn handler(mode: BlockMode) -> Handler {
         let blocking = BlockingConfig {

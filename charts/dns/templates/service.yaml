@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dns.fullname" . }}
+  labels:
+    {{- include "dns.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if has .Values.service.type (list "LoadBalancer" "NodePort") }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "dns.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: dns-udp
+      port: {{ .Values.service.ports.dns }}
+      targetPort: dns-udp
+      protocol: UDP
+    - name: dns-tcp
+      port: {{ .Values.service.ports.dns }}
+      targetPort: dns-tcp
+      protocol: TCP
+    {{- if and .Values.tls.enabled .Values.tls.dot }}
+    - name: dot
+      port: {{ .Values.service.ports.dot }}
+      targetPort: dot
+      protocol: TCP
+    {{- end }}
+    {{- if and .Values.tls.enabled .Values.tls.doh }}
+    - name: doh
+      port: {{ .Values.service.ports.doh }}
+      targetPort: doh
+      protocol: TCP
+    {{- end }}

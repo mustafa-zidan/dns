@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -8,6 +9,7 @@ use arc_swap::ArcSwap;
 use serde::Serialize;
 use tracing::{info, warn};
 
+use crate::clients::{self, Clients};
 use crate::config::BlockingConfig;
 
 /// A set of domains where an entry also matches all of its subdomains.
@@ -185,6 +187,7 @@ pub struct Blocklist {
     enabled: AtomicBool,
     paused_until: Mutex<Option<Instant>>,
     config: BlockingConfig,
+    clients: Arc<Clients>,
     http: reqwest::Client,
 }
 
@@ -202,11 +205,37 @@ impl Blocklist {
             enabled: AtomicBool::new(config.enabled),
             paused_until: Mutex::new(None),
             config,
+            clients: Arc::default(),
             http,
         };
         // Start with the inline rules so blocking works before any download finishes.
         blocklist.rules.store(Arc::new(blocklist.inline_rules()));
         Ok(blocklist)
+    }
+
+    /// Per-client groups, whose own lists load and refresh with the shared ones.
+    pub fn with_clients(mut self, clients: Arc<Clients>) -> Self {
+        self.clients = clients;
+        self
+    }
+
+    pub fn clients(&self) -> &Clients {
+        &self.clients
+    }
+
+    /// The rule blocking `name` for a query from `client`, if any. Applies
+    /// the client's group, when it has one, on top of the shared rules.
+    pub fn blocked_by(&self, name: &str, client: Option<IpAddr>) -> Option<(String, Option<&str>)> {
+        let group = client.and_then(|ip| self.clients.lookup(ip));
+        let rules = self.rules();
+        let rule = match group {
+            Some(group) => clients::check(&rules, Some(group), name, self.clients.now()),
+            None => match rules.check(name) {
+                Verdict::Blocked(rule) => Some(rule.into()),
+                Verdict::Allowed => None,
+            },
+        }?;
+        Some((rule.into_owned(), group.map(|g| g.name.as_str())))
     }
 
     /// Whether queries are being checked against the rules right now.
@@ -268,14 +297,33 @@ impl Blocklist {
         // Overlapping reloads (timer and API) would only repeat the downloads.
         let _guard = self.reloading.lock().await;
         let mut rules = self.inline_rules();
-        let mut sources = Vec::with_capacity(self.config.lists.len());
-        for source in &self.config.lists {
+        let sources = self.load_sources(&self.config.lists, &mut rules).await;
+        info!(
+            blocked = rules.blocked.len(),
+            allowed = rules.allowed.len(),
+            "blocklists ready"
+        );
+        self.rules.store(Arc::new(rules));
+        self.sources.store(Arc::new(sources));
+        self.clients.reload(self).await;
+        *self.last_reload.lock().unwrap() = Some(SystemTime::now());
+    }
+
+    /// Adds every source's rules to `rules`. A source that fails to load is
+    /// reported and skipped.
+    pub(crate) async fn load_sources(
+        &self,
+        lists: &[String],
+        rules: &mut Rules,
+    ) -> Vec<SourceStatus> {
+        let mut sources = Vec::with_capacity(lists.len());
+        for source in lists {
             match self.fetch(source).await {
                 Ok(text) => {
                     let before = rules.blocked.len();
                     rules.add_list(&text);
                     let added = rules.blocked.len() - before;
-                    info!(source, added, "loaded blocklist");
+                    info!(list = source, added, "loaded blocklist");
                     sources.push(SourceStatus {
                         source: source.clone(),
                         domains: added,
@@ -284,7 +332,7 @@ impl Blocklist {
                 }
                 Err(e) => {
                     let error = format!("{e:#}");
-                    warn!(source, error, "failed to load blocklist");
+                    warn!(list = source, error, "failed to load blocklist");
                     sources.push(SourceStatus {
                         source: source.clone(),
                         domains: 0,
@@ -293,14 +341,7 @@ impl Blocklist {
                 }
             }
         }
-        info!(
-            blocked = rules.blocked.len(),
-            allowed = rules.allowed.len(),
-            "blocklists ready"
-        );
-        self.rules.store(Arc::new(rules));
-        self.sources.store(Arc::new(sources));
-        *self.last_reload.lock().unwrap() = Some(SystemTime::now());
+        sources
     }
 
     async fn fetch(&self, source: &str) -> Result<String> {

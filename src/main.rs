@@ -1,9 +1,10 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -26,21 +27,53 @@ struct Args {
     /// Path to the TOML config file. Built-in defaults are used when omitted.
     #[arg(short, long, env = "DNS_CONFIG")]
     config: Option<PathBuf>,
+    /// Log output: human-readable text, or one JSON object per line for log
+    /// search tools.
+    #[arg(long, env = "DNS_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    log_format: LogFormat,
+    /// Check the config file and exit, without starting the server.
+    #[arg(long)]
+    check_config: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_env("DNS_LOG").unwrap_or_else(|_| "info".into()))
-        .init();
-
     let args = Args::parse();
+    let filter = EnvFilter::try_from_env("DNS_LOG").unwrap_or_else(|_| "info".into());
+    let logs = tracing_subscriber::fmt().with_env_filter(filter);
+    match args.log_format {
+        LogFormat::Text => logs.with_ansi(std::io::stdout().is_terminal()).init(),
+        LogFormat::Json => logs
+            .json()
+            .flatten_event(true)
+            .with_current_span(false)
+            .init(),
+    }
+
     let config = match &args.config {
         Some(path) => Config::load(path)?,
         None => Config::default(),
     };
+    if args.check_config {
+        Clients::new(&config.clients, config.server.timezone.as_deref())?;
+        println!("config is valid");
+        return Ok(());
+    }
 
-    let blocklist = Arc::new(Blocklist::new(config.blocking.clone())?);
+    let clients = Arc::new(Clients::new(
+        &config.clients,
+        config.server.timezone.as_deref(),
+    )?);
+    if !clients.is_empty() {
+        info!(groups = clients.len(), "per-client rules");
+    }
+    let blocklist = Arc::new(Blocklist::new(config.blocking.clone())?.with_clients(clients));
     // Lists load even when blocking starts disabled, so it can be switched on
     // through the API without waiting for a download.
     blocklist.spawn_refresh();
@@ -49,20 +82,13 @@ async fn main() -> Result<()> {
     info!(servers = ?config.upstream.servers.iter().map(ToString::to_string).collect::<Vec<_>>(), "upstreams");
     let cache = Arc::new(Cache::new(config.cache.clone()));
     let stats = Arc::new(Stats::new(&config.stats));
-    let clients = Arc::new(Clients::new(&config.clients));
-    if !clients.is_empty() {
-        info!(groups = clients.len(), "per-client rules");
-    }
-    let handler = Arc::new(
-        Handler::new(
-            Arc::clone(&blocklist),
-            &config.blocking,
-            Arc::clone(&cache),
-            upstreams,
-            Arc::clone(&stats),
-        )
-        .with_clients(Arc::clone(&clients)),
-    );
+    let handler = Arc::new(Handler::new(
+        Arc::clone(&blocklist),
+        &config.blocking,
+        Arc::clone(&cache),
+        upstreams,
+        Arc::clone(&stats),
+    ));
 
     let api = async {
         if !config.api.enabled {
@@ -70,7 +96,6 @@ async fn main() -> Result<()> {
         }
         let state = ApiState {
             blocklist,
-            clients,
             cache,
             stats,
             token: config.api.token.as_deref().map(Arc::from),

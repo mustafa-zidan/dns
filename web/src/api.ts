@@ -41,6 +41,39 @@ export interface CheckResult {
   name: string;
   blocked: boolean;
   rule: string | null;
+  /** The client group whose rules applied, when a client address was given. */
+  client: string | null;
+}
+
+export type Day = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+export interface ScheduleStatus {
+  days: Day[];
+  from: string;
+  to: string;
+  block_all: boolean;
+  denylist: number;
+  /** Whether the window is open right now. */
+  active: boolean;
+}
+
+export interface ClientGroup {
+  name: string;
+  addresses: string[];
+  /** Whether the shared lists apply to this group. */
+  blocklists: boolean;
+  denylist: number;
+  allowlist: number;
+  list_domains: number;
+  sources: SourceStatus[];
+  schedules: ScheduleStatus[];
+  paused_for_secs: number | null;
+}
+
+export interface Clients {
+  /** Local time in the schedules' time zone. */
+  now: string;
+  groups: ClientGroup[];
 }
 
 export interface CacheStatus {
@@ -84,8 +117,18 @@ export class Api {
     return this.request("blocking/reload", { method: "POST" });
   }
 
-  check(name: string): Promise<CheckResult> {
-    return this.request(`check?name=${encodeURIComponent(name)}`);
+  check(name: string, client?: string): Promise<CheckResult> {
+    const query = client ? `&client=${encodeURIComponent(client)}` : "";
+    return this.request(`check?name=${encodeURIComponent(name)}${query}`);
+  }
+
+  clients(): Promise<Clients> {
+    return this.request("clients");
+  }
+
+  /** Gives a group only the shared rules for `secs` seconds; 0 resumes it. */
+  pauseClient(name: string, secs: number): Promise<ClientGroup> {
+    return this.request(`clients/${encodeURIComponent(name)}`, { method: "PUT", body: { pause_secs: secs } });
   }
 
   cache(): Promise<CacheStatus> {

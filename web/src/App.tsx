@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Api, loadConfig, Unauthorized } from "./api";
-import type { Blocking, CacheStatus, Stats } from "./api";
+import type { Blocking, CacheStatus, Clients, Stats } from "./api";
 import { Dashboard } from "./Dashboard";
 import { duration, parseApiUrl } from "./format";
 import { savedApiUrl, savedToken, saveApiUrl, saveToken } from "./storage";
@@ -11,6 +11,7 @@ export interface Snapshot {
   stats: Stats;
   blocking: Blocking;
   cache: CacheStatus;
+  clients: Clients;
 }
 
 type Connection =
@@ -51,8 +52,13 @@ export function App() {
   const refresh = useCallback(async () => {
     if (!api) return;
     try {
-      const [stats, blocking, cache] = await Promise.all([api.stats(), api.blocking(), api.cache()]);
-      setSnapshot({ stats, blocking, cache });
+      const [stats, blocking, cache, clients] = await Promise.all([
+        api.stats(),
+        api.blocking(),
+        api.cache(),
+        api.clients(),
+      ]);
+      setSnapshot({ stats, blocking, cache, clients });
       setNeedsToken(false);
       setError(null);
     } catch (e) {

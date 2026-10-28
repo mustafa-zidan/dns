@@ -10,6 +10,8 @@
 //! | POST   | `/api/blocking/reload`  | Re-download the blocklists now                 |
 //! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule.  |
 //! |        | `&client=192.168.1.20`  | Optionally, for that client's rules            |
+//! | GET    | `/api/clients`          | Client groups, their lists and schedules       |
+//! | PUT    | `/api/clients/{name}`   | `{"pause_secs": n}` pauses a group, 0 resumes  |
 //! | GET    | `/api/cache`            | Number of cached answers                       |
 //! | DELETE | `/api/cache`            | Empty the cache                                |
 //!
@@ -21,20 +23,21 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use axum::extract::Path;
 use axum::extract::{Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
-use crate::blocklist::{Blocklist, SourceStatus, Verdict};
+use crate::blocklist::{Blocklist, SourceStatus};
 use crate::cache::Cache;
-use crate::clients::{self, Clients};
+use crate::clients::ClientStatus;
 use crate::stats::{Snapshot, Stats};
 
 const DEFAULT_TOP: usize = 10;
@@ -43,7 +46,6 @@ const MAX_TOP: usize = 100;
 #[derive(Clone)]
 pub struct ApiState {
     pub blocklist: Arc<Blocklist>,
-    pub clients: Arc<Clients>,
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
     pub token: Option<Arc<str>>,
@@ -71,6 +73,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/blocking", get(get_blocking).put(set_blocking))
         .route("/blocking/reload", post(reload_blocking))
         .route("/check", get(check))
+        .route("/clients", get(get_clients))
+        .route("/clients/{name}", put(set_client))
         .route("/cache", get(get_cache).delete(clear_cache))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     let router = Router::new()
@@ -303,18 +307,61 @@ async fn check(
         .trim()
         .trim_end_matches('.')
         .to_ascii_lowercase();
-    let group = params.client.and_then(|ip| state.clients.lookup(ip));
-    let rules = state.blocklist.rules();
-    let rule = match clients::check(&rules, group, &name) {
-        Verdict::Blocked(rule) => Some(rule.to_string()),
-        Verdict::Allowed => None,
-    };
+    let group = params
+        .client
+        .and_then(|ip| state.blocklist.clients().lookup(ip))
+        .map(|g| g.name.clone());
+    let rule = state
+        .blocklist
+        .blocked_by(&name, params.client)
+        .map(|(rule, _)| rule);
     Json(CheckResult {
         blocked: rule.is_some(),
         name,
         rule,
-        client: group.map(|g| g.name.clone()),
+        client: group,
     })
+}
+
+#[derive(Serialize)]
+struct ClientsStatus {
+    /// Local time in the schedules' time zone, `YYYY-MM-DDTHH:MM`.
+    now: String,
+    groups: Vec<ClientStatus>,
+}
+
+async fn get_clients(State(state): State<ApiState>) -> Json<ClientsStatus> {
+    let clients = state.blocklist.clients();
+    let now = clients.now();
+    Json(ClientsStatus {
+        now: now.strftime("%Y-%m-%dT%H:%M").to_string(),
+        groups: clients.groups().iter().map(|g| g.status(now)).collect(),
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetClient {
+    /// Turn the group's own rules off for this many seconds. 0 resumes them.
+    pause_secs: u64,
+}
+
+async fn set_client(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetClient>,
+) -> Result<Json<ClientStatus>, (StatusCode, &'static str)> {
+    let clients = state.blocklist.clients();
+    let group = clients
+        .get(&name)
+        .ok_or((StatusCode::NOT_FOUND, "no client group with that name"))?;
+    group.pause(Duration::from_secs(body.pause_secs));
+    info!(
+        client = name,
+        pause_secs = body.pause_secs,
+        "client rules changed through the API"
+    );
+    Ok(Json(group.status(clients.now())))
 }
 
 #[derive(Serialize)]
