@@ -4,12 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-### Changed
+## [0.0.1] - 2026-10-28
 
-- The project is now called hushdns: the crate, binary, images (`ghcr.io/mustafa-zidan/hushdns`, `ghcr.io/mustafa-zidan/hushdns-dashboard`), Helm chart, config file (`/etc/hushdns/hushdns.toml`) and environment variables (`HUSHDNS_CONFIG`, `HUSHDNS_LOG`, `HUSHDNS_LOG_FORMAT`, `HUSHDNS_API_URL`).
+The first release.
 
 ### Added
 
+- User docs with dashboard screenshots, published at the project's GitHub Pages site on each release.
+- Linux binaries for `x86_64` and `aarch64` with every release, with SHA-256 checksums.
 - UDP and TCP DNS server forwarding to upstream resolvers with failover and a TTL-aware cache.
 - Blocklists from URLs or files (hosts files, plain domain lists, adblock `||domain^` rules), refreshed on a schedule, with inline deny and allow lists.
 - DNS-over-TLS and DNS-over-HTTPS upstreams, bootstrap resolution for their hostnames, and EDNS(0) padding of encrypted queries.
@@ -24,3 +26,6 @@ All notable changes to this project are documented here. The format follows [Kee
 - Web dashboard (`web/`, image `ghcr.io/mustafa-zidan/hushdns-dashboard`) for stats, top domains, blocking controls, list status and a domain checker, plus a compose example that runs it with the server. Its dependencies are managed with pnpm under a strict supply-chain policy (7-day minimum release age, no trust downgrades, no exotic subdependencies, no unapproved install scripts).
 - `api.cors_origins` to let the dashboard, or other web apps, call the API from a browser. The API now also rejects cross-site requests from other origins and, without a token, DNS-rebinding requests.
 - Multi-arch Docker image (`linux/amd64`, `linux/arm64`) on distroless Debian 13, published to GitHub Container Registry.
+
+[Unreleased]: https://github.com/mustafa-zidan/hushdns/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/mustafa-zidan/hushdns/releases/tag/v0.0.1

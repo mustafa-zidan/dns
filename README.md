@@ -6,11 +6,14 @@
 [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/hushdns/pkgs/container/hushdns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Docs](https://img.shields.io/badge/docs-mustafa--zidan.github.io%2Fhushdns-informational)](https://mustafa-zidan.github.io/hushdns/)
 [![DoT / DoH](https://img.shields.io/badge/DoT%20%7C%20DoH-clients%20%26%20upstreams-success)](#features)
 
 hushdns is a DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
 
 It sits between your devices and an upstream resolver. Queries for domains on your blocklists never leave your network; everything else is forwarded upstream and cached.
+
+**Docs:** <https://mustafa-zidan.github.io/hushdns/>, with install steps for Docker, binaries and Kubernetes, setting up your devices, and every option.
 
 ## Features
 
@@ -79,7 +82,11 @@ helm install hushdns oci://ghcr.io/mustafa-zidan/charts/hushdns \
   --set service.type=LoadBalancer
 ```
 
-Until the first release is tagged, install from a checkout with `helm install hushdns ./charts/hushdns --set image.tag=latest --set dashboard.image.tag=latest`. See the [chart's README](charts/hushdns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+See the [chart's README](charts/hushdns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+
+## Binaries
+
+Each [release](https://github.com/mustafa-zidan/hushdns/releases) has Linux binaries for `x86_64` and `aarch64`, with a `SHA256SUMS` file. See [Install](https://mustafa-zidan.github.io/hushdns/install.html#binary) in the docs.
 
 ## Running from source
 
@@ -128,7 +135,7 @@ The dashboard is a separate web app in [`web/`](web/), published as its own imag
 
 From it you can turn blocking off or pause it, pause one client group's rules for an hour, check whether a domain is blocked (optionally for a given client address), reload the lists, clear the cache and reset the stats.
 
-![Dashboard](docs/dashboard.png)
+![Dashboard](docs/src/images/dashboard.png)
 
 The quickest way to run both is the [compose example](examples/compose/): set a token in `hushdns.toml`, run `docker compose up -d`, and open <http://localhost:8080>.
 
@@ -226,6 +233,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --test live -- --ignored   # queries real public resolvers
+mdbook serve docs                     # the docs site, at http://localhost:3000
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

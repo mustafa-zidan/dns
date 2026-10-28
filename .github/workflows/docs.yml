@@ -1,0 +1,47 @@
+name: Docs
+
+# Builds the docs in docs/ with mdBook on pull requests that touch them, and
+# publishes them to GitHub Pages for version tags, so the site always matches
+# the latest release. Run it by hand to republish the current main.
+
+on:
+  pull_request:
+    paths: ["docs/**", "config/hushdns.toml", ".github/workflows/docs.yml"]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: mdbook@0.5.4
+      - run: mdbook build docs
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: docs/book
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
