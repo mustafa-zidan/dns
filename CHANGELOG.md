@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- hushdns is now licensed under the GNU General Public License, version 3 or later (GPL-3.0-or-later), instead of MIT OR Apache-2.0. Releases 0.0.1 and 0.0.2 stay available under MIT OR Apache-2.0. The dashboard footer links to the license and the source code.
+
 ## [0.0.2] - 2026-10-28
 
 ### Added

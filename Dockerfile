@@ -11,7 +11,7 @@ FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d55
 LABEL org.opencontainers.image.title="hushdns" \
       org.opencontainers.image.description="An ad-blocking, privacy-focused DNS server" \
       org.opencontainers.image.source="https://github.com/mustafa-zidan/hushdns" \
-      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
 COPY --from=builder /usr/local/bin/hushdns /usr/local/bin/hushdns
 COPY config/hushdns.toml /etc/hushdns/hushdns.toml
 ENV HUSHDNS_CONFIG=/etc/hushdns/hushdns.toml

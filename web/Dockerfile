@@ -16,7 +16,7 @@ FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c68
 LABEL org.opencontainers.image.title="hushdns-dashboard" \
       org.opencontainers.image.description="Web dashboard for the hushdns ad-blocking DNS server" \
       org.opencontainers.image.source="https://github.com/mustafa-zidan/hushdns" \
-      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
 # The DNS server's API as the browser reaches it, such as http://localhost:8053.
 # Leave empty to let each visitor enter a server address.
 ENV HUSHDNS_API_URL=""

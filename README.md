@@ -7,7 +7,7 @@
 [![GHCR](https://img.shields.io/badge/ghcr.io-mustafa--zidan%2Fhushdns-blue?logo=docker&logoColor=white)](https://github.com/mustafa-zidan/hushdns/pkgs/container/hushdns)
 [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/hushdns/pkgs/container/hushdns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](#license)
 [![Docs](https://img.shields.io/badge/docs-mustafa--zidan.github.io%2Fhushdns-informational)](https://mustafa-zidan.github.io/hushdns/)
 [![DoT / DoH](https://img.shields.io/badge/DoT%20%7C%20DoH-clients%20%26%20upstreams-success)](#features)
 
@@ -247,11 +247,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, and [SECURITY.md](
 
 ## License
 
-Licensed under either of
+hushdns is free software: you can redistribute it and modify it under the terms of the [GNU General Public License](LICENSE), version 3 or (at your option) any later version.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+In short, if you distribute hushdns or a modified version of it, as a binary, an image or in a product, you must make the source code of that version available under the same license.
 
-at your option.
+Versions 0.0.1 and 0.0.2 were released under MIT OR Apache-2.0, and those releases stay available under those terms.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Unless you state otherwise, any contribution you submit for inclusion in hushdns is licensed the same way, without any additional terms or conditions.
