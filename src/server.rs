@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use hickory_proto::op::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::{Semaphore, mpsc};
 use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
@@ -221,49 +222,88 @@ async fn serve_dot_listener(
     }
 }
 
+/// Queries one TCP or TLS connection may have in flight at once. Past this,
+/// the server stops reading from the connection until answers go out.
+const MAX_IN_FLIGHT: usize = 32;
+
 /// Serves length-prefixed DNS messages (RFC 1035 section 4.2.2) on a TCP or
 /// TLS stream until the client closes it or goes idle. Over TLS, responses
 /// are padded for clients that pad their queries.
+///
+/// Queries are pipelined (RFC 7766, section 6.2.1.1): each one is answered
+/// as soon as it is ready, so a query waiting on an upstream doesn't hold
+/// up the cached or blocked ones sent after it on the same connection.
 async fn serve_stream<S>(
-    mut stream: S,
+    stream: S,
     peer: SocketAddr,
     handler: Arc<Handler>,
     idle: Duration,
     transport: Transport,
 ) -> Result<()>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    loop {
-        let len = match timeout(idle, stream.read_u16()).await {
-            Ok(Ok(len)) => usize::from(len),
-            // Idle timeout or the client closed the connection.
-            Ok(Err(_)) | Err(_) => return Ok(()),
-        };
-        let mut request = vec![0u8; len];
-        timeout(idle, stream.read_exact(&mut request)).await??;
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let (frames, mut outgoing) = mpsc::channel::<Vec<u8>>(MAX_IN_FLIGHT);
+    let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
 
-        let Some(reply) = handler
-            .handle_bytes(&request, Peer::new(peer.ip(), transport))
-            .await
-        else {
-            return Ok(());
-        };
-        let bytes = if transport == Transport::Dot {
-            encode_encrypted(&reply)
-        } else {
-            encode(&reply.message)
-        };
-        let Some(bytes) = bytes else {
-            return Ok(());
-        };
-        let len = u16::try_from(bytes.len())?;
-        let mut frame = Vec::with_capacity(bytes.len() + 2);
-        frame.extend_from_slice(&len.to_be_bytes());
-        frame.extend_from_slice(&bytes);
-        stream.write_all(&frame).await?;
-        stream.flush().await?;
-    }
+    let read = async move {
+        loop {
+            let permit = Arc::clone(&in_flight).acquire_owned().await?;
+            let len = match timeout(idle, reader.read_u16()).await {
+                Ok(Ok(len)) => usize::from(len),
+                // Idle timeout or the client closed the connection.
+                Ok(Err(_)) | Err(_) => return Ok(()),
+            };
+            let mut request = vec![0u8; len];
+            timeout(idle, reader.read_exact(&mut request)).await??;
+
+            let handler = Arc::clone(&handler);
+            let frames = frames.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Some(frame) = answer_frame(&handler, &request, peer, transport).await {
+                    // Fails only once the connection is gone.
+                    let _ = frames.send(frame).await;
+                }
+            });
+        }
+    };
+    let write = async move {
+        // Ends once the reader and every query it started are done with
+        // their senders.
+        while let Some(frame) = outgoing.recv().await {
+            writer.write_all(&frame).await?;
+            writer.flush().await?;
+        }
+        anyhow::Ok(())
+    };
+    // An error on either side ends the connection at once. When the client
+    // closes or goes idle, the queries already read still get answers.
+    tokio::try_join!(read, write)?;
+    Ok(())
+}
+
+/// Answers one query read from a stream, as a length-prefixed frame.
+async fn answer_frame(
+    handler: &Handler,
+    request: &[u8],
+    peer: SocketAddr,
+    transport: Transport,
+) -> Option<Vec<u8>> {
+    let reply = handler
+        .handle_bytes(request, Peer::new(peer.ip(), transport))
+        .await?;
+    let bytes = if transport == Transport::Dot {
+        encode_encrypted(&reply)
+    } else {
+        encode(&reply.message)
+    }?;
+    let len = u16::try_from(bytes.len()).ok()?;
+    let mut frame = Vec::with_capacity(bytes.len() + 2);
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&bytes);
+    Some(frame)
 }
 
 /// Serializes a response for an encrypted transport, padded to the block size
