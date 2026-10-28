@@ -2,10 +2,12 @@
 //! counts can be turned off entirely.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
+use foldhash::fast::RandomState;
 use serde::Serialize;
 
 use crate::config::StatsConfig;
@@ -34,46 +36,69 @@ impl Outcome {
     }
 }
 
+/// Lock shards in a [`DomainCounter`]. Each query takes one shard's lock, so
+/// threads recording different names rarely wait for each other.
+const SHARDS: usize = 16;
+
+type Shard = Mutex<HashMap<Box<str>, u64, RandomState>>;
+
 /// Counts how often each domain was seen, up to a fixed number of domains so
 /// a flood of random names cannot grow memory without bound.
 struct DomainCounter {
-    counts: Mutex<HashMap<Box<str>, u64>>,
+    shards: Box<[Shard]>,
+    hasher: RandomState,
+    /// Domains counted across all shards.
+    len: AtomicUsize,
     capacity: usize,
 }
 
 impl DomainCounter {
     fn new(capacity: usize) -> Self {
         Self {
-            counts: Mutex::new(HashMap::new()),
+            shards: (0..SHARDS).map(|_| Mutex::default()).collect(),
+            hasher: RandomState::default(),
+            len: AtomicUsize::new(0),
             capacity,
         }
     }
 
+    fn shard(&self, name: &str) -> &Shard {
+        let hash = self.hasher.hash_one(name);
+        &self.shards[(hash % SHARDS as u64) as usize]
+    }
+
     fn record(&self, name: &str) {
-        let mut counts = self.counts.lock().unwrap();
+        let mut counts = self.shard(name).lock().unwrap();
         if let Some(count) = counts.get_mut(name) {
             *count += 1;
-        } else if counts.len() < self.capacity {
+        } else if self.len.load(Ordering::Relaxed) < self.capacity {
+            // Racing threads can overshoot the capacity by a few entries,
+            // at most one per shard, which is fine for a memory bound.
             counts.insert(name.into(), 1);
+            self.len.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     fn top(&self, n: usize) -> Vec<DomainCount> {
-        let counts = self.counts.lock().unwrap();
-        let mut top: Vec<DomainCount> = counts
-            .iter()
-            .map(|(name, &count)| DomainCount {
+        let mut top: Vec<DomainCount> = Vec::new();
+        for shard in &self.shards {
+            let counts = shard.lock().unwrap();
+            top.extend(counts.iter().map(|(name, &count)| DomainCount {
                 name: name.to_string(),
                 count,
-            })
-            .collect();
+            }));
+        }
         top.sort_unstable_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
         top.truncate(n);
         top
     }
 
     fn clear(&self) {
-        self.counts.lock().unwrap().clear();
+        for shard in &self.shards {
+            let mut counts = shard.lock().unwrap();
+            self.len.fetch_sub(counts.len(), Ordering::Relaxed);
+            counts.clear();
+        }
     }
 }
 

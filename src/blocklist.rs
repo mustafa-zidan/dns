@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use arc_swap::ArcSwap;
+use foldhash::fast::RandomState;
 use serde::Serialize;
 use tracing::{info, warn};
 
@@ -15,7 +16,7 @@ use crate::config::BlockingConfig;
 /// A set of domains where an entry also matches all of its subdomains.
 #[derive(Debug, Default)]
 pub struct DomainSet {
-    domains: HashSet<Box<str>>,
+    domains: HashSet<Box<str>, RandomState>,
 }
 
 impl DomainSet {
