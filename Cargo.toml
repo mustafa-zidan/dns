@@ -31,6 +31,7 @@ reqwest = { version = "0.13.5", default-features = false, features = ["rustls", 
 rustls = "0.23"
 rustls-platform-verifier = "0.7"
 serde = { version = "1.0.229", features = ["derive"] }
+socket2 = { version = "0.6.5", features = ["all"] }
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-rustls = "0.26"
 toml = "1.1.8"

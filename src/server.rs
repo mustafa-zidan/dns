@@ -24,14 +24,14 @@ pub async fn serve(
 ) -> Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
     for &addr in listen {
-        let udp = UdpSocket::bind(addr)
-            .await
-            .with_context(|| format!("binding UDP {addr}"))?;
+        let udp = bind_udp_sockets(addr).with_context(|| format!("binding UDP {addr}"))?;
         let tcp = TcpListener::bind(addr)
             .await
             .with_context(|| format!("binding TCP {addr}"))?;
-        info!(listen = %addr, "listening on UDP and TCP");
-        tasks.spawn(serve_udp(Arc::new(udp), Arc::clone(&handler)));
+        info!(listen = %addr, udp_sockets = udp.len(), "listening on UDP and TCP");
+        for socket in udp {
+            tasks.spawn(serve_udp(Arc::new(socket), Arc::clone(&handler)));
+        }
         tasks.spawn(serve_tcp(tcp, Arc::clone(&handler), tcp_idle_timeout));
     }
     match tasks.join_next().await {
@@ -40,12 +40,46 @@ pub async fn serve(
     }
 }
 
-/// Binds a UDP socket and serves it. Used by tests that need an ephemeral port.
+/// Binds UDP sockets and serves them. Used by tests that need an ephemeral port.
 pub async fn bind_udp(addr: SocketAddr, handler: Arc<Handler>) -> Result<SocketAddr> {
-    let socket = UdpSocket::bind(addr).await?;
-    let local = socket.local_addr()?;
-    tokio::spawn(serve_udp(Arc::new(socket), handler));
+    let sockets = bind_udp_sockets(addr)?;
+    let local = sockets[0].local_addr()?;
+    for socket in sockets {
+        tokio::spawn(serve_udp(Arc::new(socket), Arc::clone(&handler)));
+    }
     Ok(local)
+}
+
+/// Binds one UDP socket per worker thread on `addr`. On Linux they share the
+/// port with SO_REUSEPORT, and the kernel spreads clients across them, so
+/// queries are received in parallel instead of all queueing on one socket.
+/// Elsewhere SO_REUSEPORT doesn't spread load, so there's a single socket.
+fn bind_udp_sockets(addr: SocketAddr) -> Result<Vec<UdpSocket>> {
+    let count = if cfg!(target_os = "linux") {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    } else {
+        1
+    };
+    let first = udp_socket(addr, count > 1)?;
+    // Binding port 0 picks a free port, and the other sockets join that one.
+    let addr = first.local_addr()?;
+    let mut sockets = vec![first];
+    for _ in 1..count {
+        sockets.push(udp_socket(addr, true)?);
+    }
+    Ok(sockets)
+}
+
+fn udp_socket(addr: SocketAddr, reuse_port: bool) -> Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+    #[cfg(target_os = "linux")]
+    socket.set_reuse_port(reuse_port)?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = reuse_port;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    Ok(UdpSocket::from_std(socket.into())?)
 }
 
 /// Binds a TCP listener and serves it. Used by tests that need an ephemeral port.
