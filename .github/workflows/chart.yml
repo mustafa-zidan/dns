@@ -1,6 +1,6 @@
 name: Helm chart
 
-# Publishes charts/dns to ghcr.io/<owner>/charts/dns as an OCI artifact for
+# Publishes charts/hushdns to ghcr.io/<owner>/charts/hushdns as an OCI artifact for
 # version tags. The chart and app versions both come from the tag. CI lints
 # the chart on every pull request.
 
@@ -27,5 +27,5 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          helm package charts/dns --version "$version" --app-version "$version" --destination "$RUNNER_TEMP"
-          helm push "$RUNNER_TEMP/dns-$version.tgz" "oci://ghcr.io/$owner/charts"
+          helm package charts/hushdns --version "$version" --app-version "$version" --destination "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP/hushdns-$version.tgz" "oci://ghcr.io/$owner/charts"

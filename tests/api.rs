@@ -8,14 +8,14 @@ use hickory_proto::rr::{Name, RecordType};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
-use dns::api::{ApiState, router};
-use dns::blocklist::Blocklist;
-use dns::cache::Cache;
-use dns::clients::Clients;
-use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
-use dns::handler::{Handler, Peer, Transport};
-use dns::stats::Stats;
-use dns::upstream::Upstreams;
+use hushdns::api::{ApiState, router};
+use hushdns::blocklist::Blocklist;
+use hushdns::cache::Cache;
+use hushdns::clients::Clients;
+use hushdns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
+use hushdns::handler::{Handler, Peer, Transport};
+use hushdns::stats::Stats;
+use hushdns::upstream::Upstreams;
 
 struct Fixture {
     base: String,

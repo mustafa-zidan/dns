@@ -2,11 +2,11 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "dns.fullname" . }}
+  name: {{ include "hushdns.fullname" . }}
   labels:
-    {{- include "dns.labels" . | nindent 4 }}
+    {{- include "hushdns.labels" . | nindent 4 }}
 spec:
-  secretName: {{ include "dns.tlsSecret" . }}
+  secretName: {{ include "hushdns.tlsSecret" . }}
   dnsNames:
     {{- required "tls.certManager.dnsNames needs at least one name" .Values.tls.certManager.dnsNames | toYaml | nindent 4 }}
   issuerRef:

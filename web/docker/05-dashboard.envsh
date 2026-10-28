@@ -2,6 +2,6 @@
 # Sourced by the nginx entrypoint before it renders the templates.
 # The CSP lets the page call only the configured API or, when none is set,
 # whichever server the visitor enters.
-DNS_API_URL="${DNS_API_URL%/}"
-export DNS_API_URL
-export DNS_API_CONNECT_SRC="${DNS_API_URL:-http: https:}"
+HUSHDNS_API_URL="${HUSHDNS_API_URL%/}"
+export HUSHDNS_API_URL
+export HUSHDNS_API_CONNECT_SRC="${HUSHDNS_API_URL:-http: https:}"

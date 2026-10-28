@@ -1,0 +1,103 @@
+name: Release
+
+# For a version tag, builds the server for Linux on x86_64 and aarch64 and
+# publishes a GitHub release with the binaries, their checksums, and the
+# tag's section of CHANGELOG.md as the notes. The Docker, Dashboard, Helm
+# chart and Docs workflows publish the images, chart and site for the same tag.
+
+on:
+  push:
+    tags: ["v*"]
+  # Builds and packages, without publishing, when the workflow changes.
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # 22.04 runners link against an older glibc, so the binaries run on
+          # more distributions.
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - name: Check the version
+        if: github.event_name == 'push'
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          name="hushdns-$version-${{ matrix.arch }}-linux"
+          mkdir -p "dist/$name"
+          cp target/release/hushdns README.md CHANGELOG.md LICENSE-APACHE LICENSE-MIT config/hushdns.toml "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - name: Extract release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          cat >> notes.md <<NOTES
+
+          ## Install
+
+          - Docker: \`ghcr.io/${GITHUB_REPOSITORY_OWNER}/hushdns:${version}\` and \`ghcr.io/${GITHUB_REPOSITORY_OWNER}/hushdns-dashboard:${version}\`
+          - Helm: \`helm install hushdns oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts/hushdns --version ${version}\`
+          - Binaries for Linux are attached below, with \`SHA256SUMS\`.
+
+          Docs: https://${GITHUB_REPOSITORY_OWNER}.github.io/hushdns/
+          NOTES
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in v0.*|*-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --title "hushdns ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag $prerelease

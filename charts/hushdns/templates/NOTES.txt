@@ -1,0 +1,26 @@
+The DNS server is running as {{ include "hushdns.fullname" . }}.
+
+Point your devices at the {{ include "hushdns.fullname" . }} service:
+  kubectl get service --namespace {{ .Release.Namespace }} {{ include "hushdns.fullname" . }}
+{{- if eq .Values.service.type "ClusterIP" }}
+It is a ClusterIP service, so only pods in the cluster can reach it. Set
+service.type=LoadBalancer to serve devices on your network.
+{{- end }}
+{{- if and .Values.api.enabled (not .Values.existingConfigSecret) }}
+
+API token, for the dashboard's sign-in:
+  kubectl get secret --namespace {{ .Release.Namespace }} {{ include "hushdns.fullname" . }} -o jsonpath='{.data.api-token}' | base64 -d; echo
+{{- end }}
+{{- if .Values.dashboard.enabled }}
+{{- if .Values.dashboard.ingress.enabled }}
+
+Dashboard: {{ include "hushdns.hostUrl" (list (first .Values.dashboard.ingress.hosts) .Values.dashboard.ingress) }}
+{{- else }}
+
+Dashboard, through port-forwarding:
+  kubectl port-forward --namespace {{ .Release.Namespace }} service/{{ include "hushdns.dashboardName" . }} {{ .Values.dashboard.service.port }}:{{ .Values.dashboard.service.port }} &
+  kubectl port-forward --namespace {{ .Release.Namespace }} service/{{ include "hushdns.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} &
+  open http://localhost:{{ .Values.dashboard.service.port }}
+{{- end }}
+The dashboard calls the API at {{ include "hushdns.apiUrl" . }} from your browser.
+{{- end }}

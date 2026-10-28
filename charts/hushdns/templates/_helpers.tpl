@@ -1,8 +1,8 @@
-{{- define "dns.name" -}}
+{{- define "hushdns.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "dns.fullname" -}}
+{{- define "hushdns.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -15,31 +15,31 @@
 {{- end }}
 {{- end }}
 
-{{- define "dns.dashboardName" -}}
-{{- printf "%s-dashboard" (include "dns.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- define "hushdns.dashboardName" -}}
+{{- printf "%s-dashboard" (include "hushdns.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "dns.labels" -}}
+{{- define "hushdns.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/part-of: {{ include "dns.name" . }}
+app.kubernetes.io/part-of: {{ include "hushdns.name" . }}
 {{- end }}
 
-{{- define "dns.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "dns.name" . }}
+{{- define "hushdns.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "hushdns.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: server
 {{- end }}
 
-{{- define "dns.dashboardSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "dns.name" . }}
+{{- define "hushdns.dashboardSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "hushdns.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: dashboard
 {{- end }}
 
 {{/* repository:tag, or repository@digest when a digest is pinned. */}}
-{{- define "dns.image" -}}
+{{- define "hushdns.image" -}}
 {{- $image := index . 0 }}
 {{- $root := index . 1 }}
 {{- if $image.digest }}
@@ -49,21 +49,21 @@ app.kubernetes.io/component: dashboard
 {{- end }}
 {{- end }}
 
-{{/* The Secret holding dns.toml. */}}
-{{- define "dns.configSecret" -}}
-{{- default (include "dns.fullname" .) .Values.existingConfigSecret }}
+{{/* The Secret holding hushdns.toml. */}}
+{{- define "hushdns.configSecret" -}}
+{{- default (include "hushdns.fullname" .) .Values.existingConfigSecret }}
 {{- end }}
 
-{{- define "dns.tlsSecret" -}}
+{{- define "hushdns.tlsSecret" -}}
 {{- if .Values.tls.certManager.enabled }}
-{{- printf "%s-tls" (include "dns.fullname" .) }}
+{{- printf "%s-tls" (include "hushdns.fullname" .) }}
 {{- else }}
 {{- required "tls.secretName or tls.certManager.enabled is required when tls.enabled is true" .Values.tls.secretName }}
 {{- end }}
 {{- end }}
 
 {{/* URL for an ingress host: https when a TLS entry covers it. */}}
-{{- define "dns.hostUrl" -}}
+{{- define "hushdns.hostUrl" -}}
 {{- $host := index . 0 }}
 {{- $ingress := index . 1 }}
 {{- $scheme := "http" }}
@@ -74,22 +74,22 @@ app.kubernetes.io/component: dashboard
 {{- end }}
 
 {{/* Where the browser reaches the API. */}}
-{{- define "dns.apiUrl" -}}
+{{- define "hushdns.apiUrl" -}}
 {{- if .Values.dashboard.apiUrl }}
 {{- .Values.dashboard.apiUrl }}
 {{- else if and .Values.api.ingress.enabled .Values.api.ingress.hosts }}
-{{- include "dns.hostUrl" (list (first .Values.api.ingress.hosts) .Values.api.ingress) }}
+{{- include "hushdns.hostUrl" (list (first .Values.api.ingress.hosts) .Values.api.ingress) }}
 {{- else }}
 {{- printf "http://localhost:%v" .Values.api.service.port }}
 {{- end }}
 {{- end }}
 
 {{/* The API token: from values, else the one already installed, else new. */}}
-{{- define "dns.apiToken" -}}
+{{- define "hushdns.apiToken" -}}
 {{- if .Values.api.token }}
 {{- .Values.api.token }}
 {{- else }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace (include "dns.fullname" .) }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace (include "hushdns.fullname" .) }}
 {{- if and $secret $secret.data (hasKey $secret.data "api-token") }}
 {{- index $secret.data "api-token" | b64dec }}
 {{- else }}
@@ -98,9 +98,9 @@ app.kubernetes.io/component: dashboard
 {{- end }}
 {{- end }}
 
-{{/* dns.toml, from .Values.config plus what the chart manages. Takes a dict
+{{/* hushdns.toml, from .Values.config plus what the chart manages. Takes a dict
      with the root context and the token. */}}
-{{- define "dns.configToml" -}}
+{{- define "hushdns.configToml" -}}
 {{- $root := .root }}
 {{- $v := $root.Values }}
 {{- $config := deepCopy $v.config }}
@@ -111,7 +111,7 @@ app.kubernetes.io/component: dashboard
 {{- $origins = append $origins (printf "http://localhost:%v" $v.dashboard.service.port) }}
 {{- if $v.dashboard.ingress.enabled }}
 {{- range $v.dashboard.ingress.hosts }}
-{{- $origins = append $origins (include "dns.hostUrl" (list . $v.dashboard.ingress)) }}
+{{- $origins = append $origins (include "hushdns.hostUrl" (list . $v.dashboard.ingress)) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -119,7 +119,7 @@ app.kubernetes.io/component: dashboard
 {{- $api := dict "enabled" $v.api.enabled "listen" "0.0.0.0:8053" "token" .token "cors_origins" $origins }}
 {{- $_ := set $config "api" $api }}
 {{- if $v.tls.enabled }}
-{{- $tls := dict "cert_file" "/etc/dns/tls/tls.crt" "key_file" "/etc/dns/tls/tls.key" "doh_path" $v.tls.dohPath }}
+{{- $tls := dict "cert_file" "/etc/hushdns/tls/tls.crt" "key_file" "/etc/hushdns/tls/tls.key" "doh_path" $v.tls.dohPath }}
 {{- if $v.tls.dot }}{{ $_ := set $tls "dot_listen" (list "0.0.0.0:853") }}{{ end }}
 {{- if $v.tls.doh }}{{ $_ := set $tls "doh_listen" (list "0.0.0.0:443") }}{{ end }}
 {{- $_ := set $config "tls" $tls }}

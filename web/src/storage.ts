@@ -18,8 +18,8 @@ function write(storage: () => Storage, key: string, value: string | null): void 
   }
 }
 
-const TOKEN = "dns-api-token";
-const API_URL = "dns-api-url";
+const TOKEN = "hushdns-api-token";
+const API_URL = "hushdns-api-url";
 
 /** The token stays in this tab only. */
 export const savedToken = () => read(() => sessionStorage, TOKEN);

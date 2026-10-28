@@ -1,0 +1,20 @@
+[book]
+title = "hushdns"
+description = "An ad-blocking, privacy-focused DNS server written in Rust."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/mustafa-zidan/hushdns"
+edit-url-template = "https://github.com/mustafa-zidan/hushdns/edit/main/docs/{path}"
+site-url = "/hushdns/"
+default-theme = "light"
+preferred-dark-theme = "navy"
+no-section-label = true
+
+[output.html.search]
+enable = true

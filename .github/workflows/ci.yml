@@ -49,7 +49,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo check --locked --all-targets
 
-  # Lints the Helm chart and checks the dns.toml it renders with the server's
+  # Lints the Helm chart and checks the hushdns.toml it renders with the server's
   # own config parser.
   helm:
     runs-on: ubuntu-latest
@@ -62,13 +62,13 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: helm lint --strict charts/dns
-      - run: helm lint --strict charts/dns -f charts/dns/ci/full-values.yaml
+      - run: helm lint --strict charts/hushdns
+      - run: helm lint --strict charts/hushdns -f charts/hushdns/ci/full-values.yaml
       - run: cargo build --locked
       - name: Check the rendered config
         run: |
-          for values in "" "-f charts/dns/ci/full-values.yaml"; do
-            helm template t charts/dns $values --show-only templates/secret.yaml \
-              | yq -r '.stringData["dns.toml"]' > "$RUNNER_TEMP/dns.toml"
-            target/debug/dns --check-config --config "$RUNNER_TEMP/dns.toml"
+          for values in "" "-f charts/hushdns/ci/full-values.yaml"; do
+            helm template t charts/hushdns $values --show-only templates/secret.yaml \
+              | yq -r '.stringData["hushdns.toml"]' > "$RUNNER_TEMP/hushdns.toml"
+            target/debug/hushdns --check-config --config "$RUNNER_TEMP/hushdns.toml"
           done

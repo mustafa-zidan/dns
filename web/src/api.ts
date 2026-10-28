@@ -173,7 +173,7 @@ export interface RuntimeConfig {
   apiUrl: string | null;
 }
 
-/** Reads config.json, which the container writes from DNS_API_URL. */
+/** Reads config.json, which the container writes from HUSHDNS_API_URL. */
 export async function loadConfig(): Promise<RuntimeConfig> {
   try {
     const response = await fetch("config.json", { cache: "no-store" });

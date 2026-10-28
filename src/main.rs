@@ -9,27 +9,27 @@ use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use dns::api::{self, ApiState};
-use dns::blocklist::Blocklist;
-use dns::cache::Cache;
-use dns::certs::CertStore;
-use dns::clients::Clients;
-use dns::config::Config;
-use dns::doh;
-use dns::handler::Handler;
-use dns::server;
-use dns::stats::Stats;
-use dns::upstream::Upstreams;
+use hushdns::api::{self, ApiState};
+use hushdns::blocklist::Blocklist;
+use hushdns::cache::Cache;
+use hushdns::certs::CertStore;
+use hushdns::clients::Clients;
+use hushdns::config::Config;
+use hushdns::doh;
+use hushdns::handler::Handler;
+use hushdns::server;
+use hushdns::stats::Stats;
+use hushdns::upstream::Upstreams;
 
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
     /// Path to the TOML config file. Built-in defaults are used when omitted.
-    #[arg(short, long, env = "DNS_CONFIG")]
+    #[arg(short, long, env = "HUSHDNS_CONFIG")]
     config: Option<PathBuf>,
     /// Log output: human-readable text, or one JSON object per line for log
     /// search tools.
-    #[arg(long, env = "DNS_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    #[arg(long, env = "HUSHDNS_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
     log_format: LogFormat,
     /// Check the config file and exit, without starting the server.
     #[arg(long)]
@@ -45,7 +45,7 @@ enum LogFormat {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let filter = EnvFilter::try_from_env("DNS_LOG").unwrap_or_else(|_| "info".into());
+    let filter = EnvFilter::try_from_env("HUSHDNS_LOG").unwrap_or_else(|_| "info".into());
     let logs = tracing_subscriber::fmt().with_env_filter(filter);
     match args.log_format {
         LogFormat::Text => logs.with_ansi(std::io::stdout().is_terminal()).init(),

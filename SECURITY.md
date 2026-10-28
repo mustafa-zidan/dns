@@ -8,7 +8,7 @@ The project is pre-1.0. Fixes land on `main` and in the next published image; ol
 
 ## Reporting a vulnerability
 
-Please do not open a public issue. Report it privately through [GitHub's security advisories](https://github.com/mustafa-zidan/dns/security/advisories/new) instead.
+Please do not open a public issue. Report it privately through [GitHub's security advisories](https://github.com/mustafa-zidan/hushdns/security/advisories/new) instead.
 
 Useful details:
 

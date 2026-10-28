@@ -4,12 +4,12 @@ server {
     root /usr/share/nginx/html;
     server_tokens off;
 
-    # Written from DNS_API_URL at container start.
+    # Written from HUSHDNS_API_URL at container start.
     location = /config.json {
         include /etc/nginx/conf.d/security-headers.inc;
         add_header Cache-Control "no-store" always;
         default_type application/json;
-        return 200 '{"apiUrl":"${DNS_API_URL}"}';
+        return 200 '{"apiUrl":"${HUSHDNS_API_URL}"}';
     }
 
     # Vite puts a content hash in every asset name.

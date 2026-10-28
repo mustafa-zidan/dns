@@ -20,11 +20,11 @@ cargo test --test live -- --ignored   # queries real public resolvers; needs int
 To run the server locally without root, point it at a high port:
 
 ```sh
-cargo run -- --config config/dns.toml   # after changing server.listen to 127.0.0.1:5353
+cargo run -- --config config/hushdns.toml   # after changing server.listen to 127.0.0.1:5353
 dig @127.0.0.1 -p 5353 example.com
 ```
 
-`DNS_LOG=dns=debug` logs each blocked name, cache hit and upstream failure.
+`HUSHDNS_LOG=hushdns=debug` logs each blocked name, cache hit and upstream failure.
 
 ### Dashboard
 

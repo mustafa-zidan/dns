@@ -19,13 +19,13 @@ body:
     id: config
     attributes:
       label: Config
-      description: The relevant parts of your dns.toml. Remove API tokens.
+      description: The relevant parts of your hushdns.toml. Remove API tokens.
       render: toml
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Run with `DNS_LOG=dns=debug` if you can. Remove anything private.
+      description: Run with `HUSHDNS_LOG=hushdns=debug` if you can. Remove anything private.
       render: text
   - type: input
     id: version

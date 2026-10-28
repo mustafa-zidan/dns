@@ -13,13 +13,13 @@ COPY . .
 RUN pnpm build
 
 FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e
-LABEL org.opencontainers.image.title="dns-dashboard" \
-      org.opencontainers.image.description="Web dashboard for the dns ad-blocking DNS server" \
-      org.opencontainers.image.source="https://github.com/mustafa-zidan/dns" \
+LABEL org.opencontainers.image.title="hushdns-dashboard" \
+      org.opencontainers.image.description="Web dashboard for the hushdns ad-blocking DNS server" \
+      org.opencontainers.image.source="https://github.com/mustafa-zidan/hushdns" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 # The DNS server's API as the browser reaches it, such as http://localhost:8053.
 # Leave empty to let each visitor enter a server address.
-ENV DNS_API_URL=""
+ENV HUSHDNS_API_URL=""
 COPY --chmod=755 docker/05-dashboard.envsh /docker-entrypoint.d/
 COPY docker/default.conf.template docker/security-headers.inc.template /etc/nginx/templates/
 COPY --from=build /app/dist /usr/share/nginx/html

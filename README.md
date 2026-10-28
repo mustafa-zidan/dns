@@ -1,16 +1,21 @@
-# dns
+<p align="center"><img src="docs/src/images/logo.svg" alt="" width="96" height="96"></p>
 
-[![CI](https://github.com/mustafa-zidan/dns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/dns/actions/workflows/ci.yml)
-[![Docker image](https://github.com/mustafa-zidan/dns/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/dns/actions/workflows/docker.yml)
-[![GHCR](https://img.shields.io/badge/ghcr.io-mustafa--zidan%2Fdns-blue?logo=docker&logoColor=white)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
-[![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/dns/pkgs/container/dns)
+# hushdns
+
+[![CI](https://github.com/mustafa-zidan/hushdns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/hushdns/actions/workflows/ci.yml)
+[![Docker image](https://github.com/mustafa-zidan/hushdns/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/mustafa-zidan/hushdns/actions/workflows/docker.yml)
+[![GHCR](https://img.shields.io/badge/ghcr.io-mustafa--zidan%2Fhushdns-blue?logo=docker&logoColor=white)](https://github.com/mustafa-zidan/hushdns/pkgs/container/hushdns)
+[![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-informational)](https://github.com/mustafa-zidan/hushdns/pkgs/container/hushdns)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Docs](https://img.shields.io/badge/docs-mustafa--zidan.github.io%2Fhushdns-informational)](https://mustafa-zidan.github.io/hushdns/)
 [![DoT / DoH](https://img.shields.io/badge/DoT%20%7C%20DoH-clients%20%26%20upstreams-success)](#features)
 
-A DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
+hushdns is a DNS server written in Rust, focused on ad blocking and privacy. Inspired by [Technitium DNS Server](https://technitium.com/dns/).
 
 It sits between your devices and an upstream resolver. Queries for domains on your blocklists never leave your network; everything else is forwarded upstream and cached.
+
+**Docs:** <https://mustafa-zidan.github.io/hushdns/>, with install steps for Docker, binaries and Kubernetes, setting up your devices, and every option.
 
 ## Features
 
@@ -30,15 +35,15 @@ It sits between your devices and an upstream resolver. Queries for domains on yo
 Images are published to GitHub Container Registry for `linux/amd64` and `linux/arm64`.
 
 ```sh
-docker run -d --name dns -p 53:53/udp -p 53:53/tcp ghcr.io/mustafa-zidan/dns:latest
+docker run -d --name hushdns -p 53:53/udp -p 53:53/tcp ghcr.io/mustafa-zidan/hushdns:latest
 ```
 
-The image ships with [`config/dns.toml`](config/dns.toml). To use your own, mount it over `/etc/dns/dns.toml`:
+The image ships with [`config/hushdns.toml`](config/hushdns.toml). To use your own, mount it over `/etc/hushdns/hushdns.toml`:
 
 ```sh
-docker run -d --name dns -p 53:53/udp -p 53:53/tcp \
-  -v "$PWD/dns.toml:/etc/dns/dns.toml:ro" \
-  ghcr.io/mustafa-zidan/dns:latest
+docker run -d --name hushdns -p 53:53/udp -p 53:53/tcp \
+  -v "$PWD/hushdns.toml:/etc/hushdns/hushdns.toml:ro" \
+  ghcr.io/mustafa-zidan/hushdns:latest
 ```
 
 The container runs as a non-root user.
@@ -49,8 +54,8 @@ Set `tls.cert_file` and `tls.key_file` to a PEM certificate chain and private ke
 
 ```toml
 [tls]
-cert_file = "/etc/dns/tls/fullchain.pem"
-key_file = "/etc/dns/tls/privkey.pem"
+cert_file = "/etc/hushdns/tls/fullchain.pem"
+key_file = "/etc/hushdns/tls/privkey.pem"
 dot_listen = ["0.0.0.0:853"]   # DNS-over-TLS, for Android "Private DNS" and similar
 doh_listen = ["0.0.0.0:443"]   # DNS-over-HTTPS at https://<name>/dns-query
 ```
@@ -60,10 +65,10 @@ The certificate must cover the name your devices connect to, so use one from a p
 In Docker, mount the certificate directory and publish the ports:
 
 ```sh
-docker run -d --name dns -p 53:53/udp -p 53:53/tcp -p 853:853/tcp -p 443:443/tcp \
-  -v "$PWD/dns.toml:/etc/dns/dns.toml:ro" \
-  -v "/etc/letsencrypt/live/dns.example.com:/etc/dns/tls:ro" \
-  ghcr.io/mustafa-zidan/dns:latest
+docker run -d --name hushdns -p 53:53/udp -p 53:53/tcp -p 853:853/tcp -p 443:443/tcp \
+  -v "$PWD/hushdns.toml:/etc/hushdns/hushdns.toml:ro" \
+  -v "/etc/letsencrypt/live/dns.example.com:/etc/hushdns/tls:ro" \
+  ghcr.io/mustafa-zidan/hushdns:latest
 ```
 
 The container user must be able to read the key file. Let's Encrypt's `live` directory holds symlinks into `archive`, so mount the parent `/etc/letsencrypt` instead if the links don't resolve inside the container.
@@ -72,32 +77,36 @@ Responses to padded queries are padded to 468-byte blocks (RFC 8467). DoH answer
 
 ## Running on Kubernetes
 
-A Helm chart in [`charts/dns`](charts/dns/) runs the server and the dashboard. Everything goes through `values.yaml`, including the server's config, so there's no separate config file to manage:
+A Helm chart in [`charts/hushdns`](charts/hushdns/) runs the server and the dashboard. Everything goes through `values.yaml`, including the server's config, so there's no separate config file to manage:
 
 ```sh
-helm install dns oci://ghcr.io/mustafa-zidan/charts/dns \
+helm install hushdns oci://ghcr.io/mustafa-zidan/charts/hushdns \
   --set service.type=LoadBalancer
 ```
 
-Until the first release is tagged, install from a checkout with `helm install dns ./charts/dns --set image.tag=latest --set dashboard.image.tag=latest`. See the [chart's README](charts/dns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+See the [chart's README](charts/hushdns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+
+## Binaries
+
+Each [release](https://github.com/mustafa-zidan/hushdns/releases) has Linux binaries for `x86_64` and `aarch64`, with a `SHA256SUMS` file. See [Install](https://mustafa-zidan.github.io/hushdns/install.html#binary) in the docs.
 
 ## Running from source
 
 ```sh
-cargo run --release -- --config config/dns.toml
+cargo run --release -- --config config/hushdns.toml
 ```
 
 Binding port 53 usually needs root or `CAP_NET_BIND_SERVICE`; for local testing change `server.listen` to a high port such as `127.0.0.1:5353`.
 
 ## Configuration
 
-Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` environment variable. Every key is optional. See [`config/dns.toml`](config/dns.toml) for all options and their defaults.
+Everything is in one TOML file, passed with `--config` or the `HUSHDNS_CONFIG` environment variable. Every key is optional. See [`config/hushdns.toml`](config/hushdns.toml) for all options and their defaults.
 
 ## Logs
 
-Logs go to standard output. `DNS_LOG` picks what is logged, using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), and defaults to `info`. `DNS_LOG_FORMAT=json` (or `--log-format json`) writes one JSON object per line, ready for Loki, Elasticsearch, `jq` or `kubectl logs | jq`. The default is plain text.
+Logs go to standard output. `HUSHDNS_LOG` picks what is logged, using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), and defaults to `info`. `HUSHDNS_LOG_FORMAT=json` (or `--log-format json`) writes one JSON object per line, ready for Loki, Elasticsearch, `jq` or `kubectl logs | jq`. The default is plain text.
 
-Nothing is logged per query unless you ask for it. `DNS_LOG=info,dns::query=debug` adds one `query` event for every query, always with the same fields:
+Nothing is logged per query unless you ask for it. `HUSHDNS_LOG=info,hushdns::query=debug` adds one `query` event for every query, always with the same fields:
 
 | Field | Example |
 |---|---|
@@ -112,14 +121,14 @@ Nothing is logged per query unless you ask for it. `DNS_LOG=info,dns::query=debu
 | `duration_ms` | `0.13` |
 
 ```sh
-docker logs dns | jq 'select(.outcome == "blocked") | .name' | sort | uniq -c | sort -rn
+docker logs hushdns | jq 'select(.outcome == "blocked") | .name' | sort | uniq -c | sort -rn
 ```
 
 Other events use the same names where they apply: `client_ip` and `transport` for connections, `upstream` for upstream servers, `list` for blocklists, `listen` for listeners and `error` for errors. Per-query logs record who looked up what, so turn them on only when you need them.
 
 ## Dashboard
 
-The dashboard is a separate web app in [`web/`](web/), published as its own image, `ghcr.io/mustafa-zidan/dns-dashboard`. It calls the server's API from the browser. It shows:
+The dashboard is a separate web app in [`web/`](web/), published as its own image, `ghcr.io/mustafa-zidan/hushdns-dashboard`. It calls the server's API from the browser. It shows:
 
 - query counts and the share that was blocked
 - the top queried and top blocked domains
@@ -128,16 +137,16 @@ The dashboard is a separate web app in [`web/`](web/), published as its own imag
 
 From it you can turn blocking off or pause it, pause one client group's rules for an hour, check whether a domain is blocked (optionally for a given client address), reload the lists, clear the cache and reset the stats.
 
-![Dashboard](docs/dashboard.png)
+![Dashboard](docs/src/images/dashboard.png)
 
-The quickest way to run both is the [compose example](examples/compose/): set a token in `dns.toml`, run `docker compose up -d`, and open <http://localhost:8080>.
+The quickest way to run both is the [compose example](examples/compose/): set a token in `hushdns.toml`, run `docker compose up -d`, and open <http://localhost:8080>.
 
 To run the dashboard on its own, tell it where the browser reaches the API:
 
 ```sh
-docker run -d --name dns-dashboard -p 8080:8080 \
-  -e DNS_API_URL=http://localhost:8053 \
-  ghcr.io/mustafa-zidan/dns-dashboard:latest
+docker run -d --name hushdns-dashboard -p 8080:8080 \
+  -e HUSHDNS_API_URL=http://localhost:8053 \
+  ghcr.io/mustafa-zidan/hushdns-dashboard:latest
 ```
 
 On the server, add the dashboard's address to `api.cors_origins` and set `api.token`:
@@ -149,7 +158,7 @@ token = "change-me"
 cors_origins = ["http://localhost:8080"]
 ```
 
-Leave `DNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
+Leave `HUSHDNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
 
 ## Per-client rules
 
@@ -226,6 +235,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --test live -- --ignored   # queries real public resolvers
+mdbook serve docs                     # the docs site, at http://localhost:3000
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

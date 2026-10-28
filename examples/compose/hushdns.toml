@@ -1,4 +1,4 @@
-# Server settings for compose.yaml. See config/dns.toml for every option.
+# Server settings for compose.yaml. See config/hushdns.toml for every option.
 
 [blocking]
 lists = [
