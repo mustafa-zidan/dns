@@ -21,3 +21,4 @@
 - [Configuration](configuration.md)
 - [HTTP API](api.md)
 - [Privacy](privacy.md)
+- [Performance](performance.md)
