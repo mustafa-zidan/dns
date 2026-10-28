@@ -323,7 +323,7 @@ impl Blocklist {
                     let before = rules.blocked.len();
                     rules.add_list(&text);
                     let added = rules.blocked.len() - before;
-                    info!(source, added, "loaded blocklist");
+                    info!(list = source, added, "loaded blocklist");
                     sources.push(SourceStatus {
                         source: source.clone(),
                         domains: added,
@@ -332,7 +332,7 @@ impl Blocklist {
                 }
                 Err(e) => {
                     let error = format!("{e:#}");
-                    warn!(source, error, "failed to load blocklist");
+                    warn!(list = source, error, "failed to load blocklist");
                     sources.push(SourceStatus {
                         source: source.clone(),
                         domains: 0,

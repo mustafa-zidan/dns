@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use crate::handler::{Handler, client_max_payload};
+use crate::handler::{Handler, Peer, Transport, client_max_payload};
 use crate::padding;
 
 /// ALPN protocol id for DNS-over-TLS (RFC 7858).
@@ -30,7 +30,7 @@ pub async fn serve(
         let tcp = TcpListener::bind(addr)
             .await
             .with_context(|| format!("binding TCP {addr}"))?;
-        info!(%addr, "listening on UDP and TCP");
+        info!(listen = %addr, "listening on UDP and TCP");
         tasks.spawn(serve_udp(Arc::new(udp), Arc::clone(&handler)));
         tasks.spawn(serve_tcp(tcp, Arc::clone(&handler), tcp_idle_timeout));
     }
@@ -75,14 +75,17 @@ async fn serve_udp(socket: Arc<UdpSocket>, handler: Arc<Handler>) -> Result<()> 
         let socket = Arc::clone(&socket);
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
+            let Some(response) = handler
+                .handle_bytes(&request, Peer::new(peer.ip(), Transport::Udp))
+                .await
+            else {
                 return;
             };
             let Some(bytes) = encode_udp(&response, client_max_payload(&request)) else {
                 return;
             };
             if let Err(e) = socket.send_to(&bytes, peer).await {
-                debug!(%peer, error = %e, "UDP send failed");
+                debug!(client_ip = %peer.ip(), error = %e, "UDP send failed");
             }
         });
     }
@@ -116,7 +119,7 @@ pub async fn serve_dot(
         let listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("binding DoT {addr}"))?;
-        info!(%addr, "listening for DNS-over-TLS");
+        info!(listen = %addr, "listening for DNS-over-TLS");
         tasks.spawn(serve_dot_listener(
             listener,
             tls.clone(),
@@ -148,8 +151,8 @@ async fn serve_tcp(listener: TcpListener, handler: Arc<Handler>, idle: Duration)
         let (stream, peer) = listener.accept().await?;
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            if let Err(e) = serve_stream(stream, peer, handler, idle, false).await {
-                debug!(%peer, error = %e, "TCP connection closed");
+            if let Err(e) = serve_stream(stream, peer, handler, idle, Transport::Tcp).await {
+                debug!(client_ip = %peer.ip(), transport = "tcp", error = %e, "connection closed");
             }
         });
     }
@@ -170,11 +173,15 @@ async fn serve_dot_listener(
             // a client that connects and stalls can't hold a task open.
             let stream = match timeout(idle, tls.accept(stream)).await {
                 Ok(Ok(stream)) => stream,
-                Ok(Err(e)) => return debug!(%peer, error = %e, "DoT handshake failed"),
-                Err(_) => return debug!(%peer, "DoT handshake timed out"),
+                Ok(Err(e)) => {
+                    return debug!(client_ip = %peer.ip(), transport = "dot", error = %e, "TLS handshake failed");
+                }
+                Err(_) => {
+                    return debug!(client_ip = %peer.ip(), transport = "dot", "TLS handshake timed out");
+                }
             };
-            if let Err(e) = serve_stream(stream, peer, handler, idle, true).await {
-                debug!(%peer, error = %e, "DoT connection closed");
+            if let Err(e) = serve_stream(stream, peer, handler, idle, Transport::Dot).await {
+                debug!(client_ip = %peer.ip(), transport = "dot", error = %e, "connection closed");
             }
         });
     }
@@ -188,7 +195,7 @@ async fn serve_stream<S>(
     peer: SocketAddr,
     handler: Arc<Handler>,
     idle: Duration,
-    encrypted: bool,
+    transport: Transport,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -202,10 +209,13 @@ where
         let mut request = vec![0u8; len];
         timeout(idle, stream.read_exact(&mut request)).await??;
 
-        let Some(response) = handler.handle_bytes(&request, peer.ip()).await else {
+        let Some(response) = handler
+            .handle_bytes(&request, Peer::new(peer.ip(), transport))
+            .await
+        else {
             return Ok(());
         };
-        let bytes = if encrypted {
+        let bytes = if transport == Transport::Dot {
             encode_encrypted(&request, &response)
         } else {
             encode(&response)

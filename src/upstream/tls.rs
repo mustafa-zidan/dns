@@ -65,12 +65,12 @@ impl TlsUpstream {
                     return Ok(response);
                 }
                 // The server most likely closed it; fall through to a fresh one.
-                Err(e) => debug!(error = %e, "reused DoT connection failed"),
+                Err(e) => debug!(upstream = %self.host, error = %e, "reused DoT connection failed"),
             }
         }
         match self.fresh_exchange(&bytes, query).await {
             Err(e) if closed_early(&e) => {
-                debug!(error = %e, "DoT upstream closed the connection early, retrying once");
+                debug!(upstream = %self.host, error = %e, "DoT upstream closed the connection early, retrying once");
                 self.fresh_exchange(&bytes, query).await
             }
             result => result,

@@ -22,6 +22,18 @@ pub enum Outcome {
     Invalid,
 }
 
+impl Outcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Blocked => "blocked",
+            Outcome::Cached => "cached",
+            Outcome::Forwarded => "forwarded",
+            Outcome::Failed => "failed",
+            Outcome::Invalid => "invalid",
+        }
+    }
+}
+
 /// Counts how often each domain was seen, up to a fixed number of domains so
 /// a flood of random names cannot grow memory without bound.
 struct DomainCounter {

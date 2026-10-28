@@ -46,7 +46,7 @@ impl HttpsUpstream {
 
         let bytes = match self.post(body.clone()).await {
             Err(e) if closed_early(&e) => {
-                debug!(error = %e, "DoH upstream closed the connection early, retrying once");
+                debug!(upstream = %self.url, error = %e, "DoH upstream closed the connection early, retrying once");
                 self.post(body).await
             }
             result => result,

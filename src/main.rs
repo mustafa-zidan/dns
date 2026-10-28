@@ -1,9 +1,10 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -26,15 +27,32 @@ struct Args {
     /// Path to the TOML config file. Built-in defaults are used when omitted.
     #[arg(short, long, env = "DNS_CONFIG")]
     config: Option<PathBuf>,
+    /// Log output: human-readable text, or one JSON object per line for log
+    /// search tools.
+    #[arg(long, env = "DNS_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    log_format: LogFormat,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_env("DNS_LOG").unwrap_or_else(|_| "info".into()))
-        .init();
-
     let args = Args::parse();
+    let filter = EnvFilter::try_from_env("DNS_LOG").unwrap_or_else(|_| "info".into());
+    let logs = tracing_subscriber::fmt().with_env_filter(filter);
+    match args.log_format {
+        LogFormat::Text => logs.with_ansi(std::io::stdout().is_terminal()).init(),
+        LogFormat::Json => logs
+            .json()
+            .flatten_event(true)
+            .with_current_span(false)
+            .init(),
+    }
+
     let config = match &args.config {
         Some(path) => Config::load(path)?,
         None => Config::default(),

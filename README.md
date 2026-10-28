@@ -82,7 +82,29 @@ Binding port 53 usually needs root or `CAP_NET_BIND_SERVICE`; for local testing 
 
 Everything is in one TOML file, passed with `--config` or the `DNS_CONFIG` environment variable. Every key is optional. See [`config/dns.toml`](config/dns.toml) for all options and their defaults.
 
-Logging is controlled by `DNS_LOG` using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), for example `DNS_LOG=dns=debug` to see each blocked name and cache hit.
+## Logs
+
+Logs go to standard output. `DNS_LOG` picks what is logged, using [`tracing` filter syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html), and defaults to `info`. `DNS_LOG_FORMAT=json` (or `--log-format json`) writes one JSON object per line, ready for Loki, Elasticsearch, `jq` or `kubectl logs | jq`. The default is plain text.
+
+Nothing is logged per query unless you ask for it. `DNS_LOG=info,dns::query=debug` adds one `query` event for every query, always with the same fields:
+
+| Field | Example |
+|---|---|
+| `name` | `tracker.ads.example.com` |
+| `qtype` | `AAAA` |
+| `outcome` | `blocked`, `cached`, `forwarded`, `failed` or `invalid` |
+| `rcode` | `NoError`, `NXDomain`, `ServFail` |
+| `rule` | the rule that blocked it, `*` for a schedule that blocks everything |
+| `client_ip` | `192.168.1.20` |
+| `client_group` | the `[[clients]]` group whose rules blocked it |
+| `transport` | `udp`, `tcp`, `dot` or `doh` |
+| `duration_ms` | `0.13` |
+
+```sh
+docker logs dns | jq 'select(.outcome == "blocked") | .name' | sort | uniq -c | sort -rn
+```
+
+Other events use the same names where they apply: `client_ip` and `transport` for connections, `upstream` for upstream servers, `list` for blocklists, `listen` for listeners and `error` for errors. Per-query logs record who looked up what, so turn them on only when you need them.
 
 ## Dashboard
 
@@ -182,7 +204,6 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- Searchable structured logs (JSON output).
 - A Helm chart for Kubernetes.
 
 ## Development

@@ -25,7 +25,7 @@ use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, info};
 
-use crate::handler::Handler;
+use crate::handler::{Handler, Peer, Transport};
 use crate::server::encode_encrypted;
 
 /// ALPN protocol ids, HTTP/2 preferred.
@@ -48,7 +48,7 @@ pub async fn serve(
         let listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("binding DoH {addr}"))?;
-        info!(%addr, path, "listening for DNS-over-HTTPS");
+        info!(listen = %addr, path, "listening for DNS-over-HTTPS");
         tasks.spawn(serve_listener(
             listener,
             router(path, Arc::clone(&handler)),
@@ -97,8 +97,12 @@ async fn serve_listener(
         tokio::spawn(async move {
             let stream = match timeout(idle, tls.accept(stream)).await {
                 Ok(Ok(stream)) => stream,
-                Ok(Err(e)) => return debug!(%peer, error = %e, "DoH handshake failed"),
-                Err(_) => return debug!(%peer, "DoH handshake timed out"),
+                Ok(Err(e)) => {
+                    return debug!(client_ip = %peer.ip(), transport = "doh", error = %e, "TLS handshake failed");
+                }
+                Err(_) => {
+                    return debug!(client_ip = %peer.ip(), transport = "doh", "TLS handshake timed out");
+                }
             };
             let mut builder = auto::Builder::new(TokioExecutor::new());
             builder
@@ -114,7 +118,7 @@ async fn serve_listener(
                 .serve_connection(TokioIo::new(stream), service)
                 .await
             {
-                debug!(%peer, error = %e, "DoH connection closed");
+                debug!(client_ip = %peer.ip(), transport = "doh", error = %e, "connection closed");
             }
         });
     }
@@ -157,7 +161,10 @@ async fn answer(handler: &Handler, peer: SocketAddr, request: &[u8]) -> Response
     if Message::from_vec(request).is_err() {
         return (StatusCode::BAD_REQUEST, "not a DNS message").into_response();
     }
-    let Some(response) = handler.handle_bytes(request, peer.ip()).await else {
+    let Some(response) = handler
+        .handle_bytes(request, Peer::new(peer.ip(), Transport::Doh))
+        .await
+    else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let Some(bytes) = encode_encrypted(request, &response) else {

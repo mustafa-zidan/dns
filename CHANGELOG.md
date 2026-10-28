@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - UDP and TCP DNS server forwarding to upstream resolvers with failover and a TTL-aware cache.
 - Blocklists from URLs or files (hosts files, plain domain lists, adblock `||domain^` rules), refreshed on a schedule, with inline deny and allow lists.
 - DNS-over-TLS and DNS-over-HTTPS upstreams, bootstrap resolution for their hostnames, and EDNS(0) padding of encrypted queries.
+- `DNS_LOG_FORMAT=json` for one JSON object per log line, and an opt-in `dns::query` event per query with fixed field names (`name`, `qtype`, `outcome`, `rcode`, `rule`, `client_ip`, `client_group`, `transport`, `duration_ms`). Other log fields now use the same names throughout.
 - The dashboard shows client groups with their rules, lists and open schedules, can pause one group, and checks a domain for a given client address.
 - Per-client blocklists (`lists`) and weekly schedules (`[[clients.schedules]]`) that block everything or a denylist during a time window, in `server.timezone`. `GET /api/clients` shows each group, and `PUT /api/clients/<name>` pauses one group's rules.
 - Per-client rules (`[[clients]]`): groups of addresses and networks with their own denylist and allowlist, optionally skipping the shared blocklists. `/api/check` takes a `client` address.

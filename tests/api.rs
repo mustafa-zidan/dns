@@ -13,7 +13,7 @@ use dns::blocklist::Blocklist;
 use dns::cache::Cache;
 use dns::clients::Clients;
 use dns::config::{BlockingConfig, CacheConfig, Config, StatsConfig, UpstreamConfig};
-use dns::handler::Handler;
+use dns::handler::{Handler, Peer, Transport};
 use dns::stats::Stats;
 use dns::upstream::Upstreams;
 
@@ -78,7 +78,10 @@ async fn start_with(token: Option<&str>, cors_origins: &[&str]) -> Fixture {
     }
 }
 
-const LOCAL: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+const LOCAL: Peer = Peer {
+    ip: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    transport: Transport::Udp,
+};
 
 fn query(name: &str) -> Message {
     let mut msg = Message::new(7, MessageType::Query, OpCode::Query);
