@@ -1,0 +1,83 @@
+name: Benchmark
+
+# Compares query throughput and latency between two versions of hushdns, and
+# against Technitium DNS Server, with bench/compare.sh. A version tag is
+# compared with the tag before it. Run it by hand to compare any two refs.
+# The report goes to the run's summary and is kept as an artifact.
+#
+# Shared runners are noisy, so treat differences under about 5% as noise.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Baseline ref (default: the latest tag)
+        required: false
+      head:
+        description: Ref to compare (default: the branch this runs on)
+        required: false
+      technitium:
+        description: Also benchmark Technitium DNS Server
+        type: boolean
+        default: true
+      duration:
+        description: Seconds per run
+        default: "15"
+      runs:
+        description: Runs per scenario (the median is reported)
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - name: Pick the refs
+        id: refs
+        env:
+          BASE: ${{ inputs.base }}
+          HEAD_REF: ${{ inputs.head }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            head="$GITHUB_REF_NAME"
+            base=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$head" | head -1)
+          else
+            head="${HEAD_REF:-$GITHUB_REF_NAME}"
+            base="${BASE:-$(git tag --list 'v*' --sort=-v:refname | head -1)}"
+          fi
+          # The first tag has nothing before it, so it's measured on its own.
+          if [ -z "$base" ] || [ "$base" = "$head" ]; then refs="$head"; else refs="$base $head"; fi
+          echo "refs=$refs" >> "$GITHUB_OUTPUT"
+          echo "Comparing: $refs"
+      - name: Benchmark
+        env:
+          DURATION: ${{ inputs.duration || '15' }}
+          RUNS: ${{ inputs.runs || '3' }}
+          TECHNITIUM: ${{ github.event_name == 'push' || inputs.technitium }}
+          REFS: ${{ steps.refs.outputs.refs }}
+        run: |
+          args=()
+          [ "$TECHNITIUM" = true ] && args+=(--technitium)
+          # shellcheck disable=SC2086
+          bench/compare.sh --out "$RUNNER_TEMP/bench" "${args[@]}" $REFS
+          cat "$RUNNER_TEMP/bench/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmark
+          path: |
+            ${{ runner.temp }}/bench/report.md
+            ${{ runner.temp }}/bench/results/
+            ${{ runner.temp }}/bench/*.log
+          if-no-files-found: ignore

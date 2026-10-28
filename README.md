@@ -222,6 +222,10 @@ Stats live in memory only and reset on restart. Set `stats.top_domains = false` 
 
 Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address or from one listed in `api.cors_origins`. Without a token, the `Host` must also be an IP address or `localhost`, which stops DNS rebinding. So without a token, reach the API by IP address or `localhost`, not by a hostname.
 
+## Performance
+
+On a 4-CPU machine, hushdns 0.0.1 answered about 160,000 cached and 185,000 blocked queries per second over UDP, roughly twice as many as Technitium DNS Server 15.6.2 under the same load, with a few percent of its memory. See [Performance](https://mustafa-zidan.github.io/hushdns/performance.html) for the full table, how it's measured, and how to run `bench/compare.sh` yourself. Every version tag is benchmarked in CI against the one before it.
+
 ## Roadmap
 
 - Creating and editing client groups from the dashboard, saved across restarts. Today the dashboard shows groups and pauses them, and groups are defined in the config.
@@ -236,6 +240,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo test --test live -- --ignored   # queries real public resolvers
 mdbook serve docs                     # the docs site, at http://localhost:3000
+bench/compare.sh v0.0.1 HEAD          # benchmark your changes against a release
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.

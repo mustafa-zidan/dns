@@ -7,6 +7,13 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /bench
+    schedule:
+      interval: weekly
+    groups:
+      bench:
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

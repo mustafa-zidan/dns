@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- A benchmark (`bench/compare.sh`) that compares two versions of hushdns, and Technitium DNS Server, under the same cached, blocked, forwarded and mixed load. It runs in CI for every version tag against the previous one, and the docs have a Performance page with the 0.0.1 baseline.
+
 ## [0.0.1] - 2026-10-28
 
 The first release.
