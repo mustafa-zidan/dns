@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-10-28
+
 ### Added
 
 - A benchmark (`bench/compare.sh`) that compares two versions of hushdns, and Technitium DNS Server, under the same cached, blocked, forwarded and mixed load. It runs in CI for every version tag against the previous one, and pull requests that change the server fail if throughput drops more than 15%. The docs have a Performance page with the numbers.
@@ -38,5 +40,6 @@ The first release.
 - `api.cors_origins` to let the dashboard, or other web apps, call the API from a browser. The API now also rejects cross-site requests from other origins and, without a token, DNS-rebinding requests.
 - Multi-arch Docker image (`linux/amd64`, `linux/arm64`) on distroless Debian 13, published to GitHub Container Registry.
 
-[Unreleased]: https://github.com/mustafa-zidan/hushdns/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/mustafa-zidan/hushdns/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/mustafa-zidan/hushdns/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/mustafa-zidan/hushdns/releases/tag/v0.0.1
