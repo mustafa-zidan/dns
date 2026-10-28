@@ -24,6 +24,10 @@
 
 set -euo pipefail
 
+# Measure what a default install runs: a backtrace setting left in the
+# environment makes every error capture a stack trace, which is slow.
+unset RUST_BACKTRACE RUST_LIB_BACKTRACE
+
 DURATION=${DURATION:-15}
 RUNS=${RUNS:-3}
 WARMUP=${WARMUP:-5}
