@@ -733,6 +733,7 @@ dependencies = [
  "base64",
  "clap",
  "foldhash",
+ "hashbrown",
  "hickory-proto",
  "hyper",
  "hyper-util",
