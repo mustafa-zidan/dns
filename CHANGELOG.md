@@ -6,7 +6,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
-- A benchmark (`bench/compare.sh`) that compares two versions of hushdns, and Technitium DNS Server, under the same cached, blocked, forwarded and mixed load. It runs in CI for every version tag against the previous one, and the docs have a Performance page with the 0.0.1 baseline.
+- A benchmark (`bench/compare.sh`) that compares two versions of hushdns, and Technitium DNS Server, under the same cached, blocked, forwarded and mixed load. It runs in CI for every version tag against the previous one, and pull requests that change the server fail if throughput drops more than 15%. The docs have a Performance page with the numbers.
+
+### Changed
+
+- 30% to 50% more queries per second than 0.0.1 in every benchmark scenario, with p99 latency 24% to 31% lower. Each query is parsed once, the binary is built with link-time optimization and uses mimalloc, UDP is received on one socket per worker thread, and per-domain counters no longer share one lock.
+- TCP and DNS-over-TLS connections answer pipelined queries as they're ready, instead of one at a time.
+- Blocklists use less memory and load faster: a 1,000,000-domain list takes 72 MiB instead of 93 MiB and loads in 0.55 s instead of 0.75 s. Parsing no longer holds up queries.
 
 ## [0.0.1] - 2026-10-28
 

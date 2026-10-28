@@ -224,7 +224,7 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Performance
 
-On a 4-CPU machine, hushdns 0.0.1 answered about 160,000 cached and 185,000 blocked queries per second over UDP, roughly twice as many as Technitium DNS Server 15.6.2 under the same load, with a few percent of its memory. See [Performance](https://mustafa-zidan.github.io/hushdns/performance.html) for the full table, how it's measured, and how to run `bench/compare.sh` yourself. Every version tag is benchmarked in CI against the one before it.
+On a 4-CPU machine, hushdns answers about 215,000 cached and 245,000 blocked queries per second over UDP, 30% to 50% more than 0.0.1 and about three times as many as Technitium DNS Server 15.6.2 under the same load, with a fifth of its memory or less. See [Performance](https://mustafa-zidan.github.io/hushdns/performance.html) for the full table, what changed, how it's measured, and how to run `bench/compare.sh` yourself. Every version tag is benchmarked in CI against the one before it, and pull requests are checked for regressions.
 
 ## Roadmap
 
