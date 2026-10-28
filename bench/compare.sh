@@ -21,6 +21,8 @@
 #   --technitium         also benchmark Technitium, after the refs
 #   --technitium-only    benchmark only Technitium
 #   --out DIR            where results go (OUT, default a new temp directory)
+#   --max-regression PCT fail if a ref's queries/s fall more than PCT percent
+#                        below the baseline's in any scenario (MAX_REGRESSION)
 
 set -euo pipefail
 
@@ -36,6 +38,7 @@ SCENARIOS=${SCENARIOS:-cached,blocked,forwarded,mixed}
 BLOCKLIST_COUNT=${BLOCKLIST_COUNT:-100000}
 TECHNITIUM_IMAGE=${TECHNITIUM_IMAGE:-technitium/dns-server:15.6.2@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245}
 OUT=${OUT:-}
+MAX_REGRESSION=${MAX_REGRESSION:-}
 technitium=false
 refs=()
 
@@ -49,7 +52,8 @@ while [ $# -gt 0 ]; do
     --technitium) technitium=true; shift ;;
     --technitium-only) technitium=true; refs=(); only_technitium=true; shift ;;
     --out) OUT=$2; shift 2 ;;
-    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --max-regression) MAX_REGRESSION=$2; shift 2 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option $1" >&2; exit 2 ;;
     *) refs+=("$1"); shift ;;
   esac
@@ -210,13 +214,15 @@ if $technitium; then
   fi
 fi
 
+check=()
+[ -n "$MAX_REGRESSION" ] && check=(--max-regression "$MAX_REGRESSION")
 {
   echo "## Benchmark"
   echo
   echo "$CONCURRENCY queries in flight over UDP, ${DURATION}s per run after a ${WARMUP}s warm-up, median of $RUNS runs, a ${BLOCKLIST_COUNT}-domain blocklist. Peak memory is the highest resident size the server reached so far."
   echo "Server on CPUs ${SERVER_CPUS:-shared}, load generator and upstream on ${LOAD_CPUS:-shared}, $(nproc) CPUs in total ($(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ //'))."
   echo
-  "$BENCH" report --baseline "$baseline" "$OUT"/results/*.json
+  "$BENCH" report --baseline "$baseline" "${check[@]}" "$OUT"/results/*.json
 } | tee "$OUT/report.md"
 echo >&2
 echo "Results are in $OUT" >&2
