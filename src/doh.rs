@@ -161,19 +161,19 @@ async fn answer(handler: &Handler, peer: SocketAddr, request: &[u8]) -> Response
     if Message::from_vec(request).is_err() {
         return (StatusCode::BAD_REQUEST, "not a DNS message").into_response();
     }
-    let Some(response) = handler
+    let Some(reply) = handler
         .handle_bytes(request, Peer::new(peer.ip(), Transport::Doh))
         .await
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Some(bytes) = encode_encrypted(request, &response) else {
+    let Some(bytes) = encode_encrypted(&reply) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     (
         [
             (header::CONTENT_TYPE, HeaderValue::from_static(DNS_MESSAGE)),
-            (header::CACHE_CONTROL, cache_control(&response)),
+            (header::CACHE_CONTROL, cache_control(&reply.message)),
         ],
         bytes,
     )

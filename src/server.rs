@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use crate::handler::{Handler, Peer, Transport, client_max_payload};
+use crate::handler::{Handler, Peer, Reply, Transport};
 use crate::padding;
 
 /// ALPN protocol id for DNS-over-TLS (RFC 7858).
@@ -75,13 +75,13 @@ async fn serve_udp(socket: Arc<UdpSocket>, handler: Arc<Handler>) -> Result<()> 
         let socket = Arc::clone(&socket);
         let handler = Arc::clone(&handler);
         tokio::spawn(async move {
-            let Some(response) = handler
+            let Some(reply) = handler
                 .handle_bytes(&request, Peer::new(peer.ip(), Transport::Udp))
                 .await
             else {
                 return;
             };
-            let Some(bytes) = encode_udp(&response, client_max_payload(&request)) else {
+            let Some(bytes) = encode_udp(&reply.message, reply.max_udp_payload) else {
                 return;
             };
             if let Err(e) = socket.send_to(&bytes, peer).await {
@@ -209,16 +209,16 @@ where
         let mut request = vec![0u8; len];
         timeout(idle, stream.read_exact(&mut request)).await??;
 
-        let Some(response) = handler
+        let Some(reply) = handler
             .handle_bytes(&request, Peer::new(peer.ip(), transport))
             .await
         else {
             return Ok(());
         };
         let bytes = if transport == Transport::Dot {
-            encode_encrypted(&request, &response)
+            encode_encrypted(&reply)
         } else {
-            encode(&response)
+            encode(&reply.message)
         };
         let Some(bytes) = bytes else {
             return Ok(());
@@ -234,12 +234,11 @@ where
 
 /// Serializes a response for an encrypted transport, padded to the block size
 /// RFC 8467 recommends when the client padded its query.
-pub fn encode_encrypted(request: &[u8], response: &Message) -> Option<Vec<u8>> {
-    let padded = Message::from_vec(request).is_ok_and(|q| padding::requested(&q));
-    if !padded {
-        return encode(response);
+pub fn encode_encrypted(reply: &Reply) -> Option<Vec<u8>> {
+    if !reply.pad {
+        return encode(&reply.message);
     }
-    padding::encode_padded(response, padding::RESPONSE_BLOCK)
+    padding::encode_padded(&reply.message, padding::RESPONSE_BLOCK)
         .inspect_err(|e| error!(error = %e, "failed to encode response"))
         .ok()
 }
