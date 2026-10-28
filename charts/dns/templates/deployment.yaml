@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dns.fullname" . }}
+  labels:
+    {{- include "dns.labels" . | nindent 4 }}
+    {{- include "dns.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dns.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart when the config changes. The token is left out, so a
+        # generated one does not restart the pod on every upgrade.
+        checksum/config: {{ toJson (list .Values.config .Values.api.enabled .Values.api.corsOrigins .Values.tls .Values.dashboard.ingress .Values.existingConfigSecret) | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "dns.labels" . | nindent 8 }}
+        {{- include "dns.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+        # Lets the non-root server bind ports 53, 443 and 853. A namespaced
+        # sysctl that Kubernetes allows by default.
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      containers:
+        - name: dns
+          image: {{ include "dns.image" (list .Values.image .) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/dns/dns.toml"]
+          env:
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+          ports:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+            {{- if and .Values.tls.enabled .Values.tls.dot }}
+            - name: dot
+              containerPort: 853
+              protocol: TCP
+            {{- end }}
+            {{- if and .Values.tls.enabled .Values.tls.doh }}
+            - name: doh
+              containerPort: 443
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.api.enabled }}
+            - name: api
+              containerPort: 8053
+              protocol: TCP
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: dns-tcp
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: dns-tcp
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dns/dns.toml
+              subPath: dns.toml
+              readOnly: true
+            {{- if .Values.tls.enabled }}
+            # Mounted as a directory, not with subPath, so a renewed
+            # certificate shows up in the running pod.
+            - name: tls
+              mountPath: /etc/dns/tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "dns.configSecret" . }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "dns.tlsSecret" . }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

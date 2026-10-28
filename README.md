@@ -70,6 +70,17 @@ The container user must be able to read the key file. Let's Encrypt's `live` dir
 
 Responses to padded queries are padded to 468-byte blocks (RFC 8467). DoH answers carry a `Cache-Control: max-age` equal to their smallest TTL.
 
+## Running on Kubernetes
+
+A Helm chart in [`charts/dns`](charts/dns/) runs the server and the dashboard. Everything goes through `values.yaml`, including the server's config, so there's no separate config file to manage:
+
+```sh
+helm install dns oci://ghcr.io/mustafa-zidan/charts/dns \
+  --set service.type=LoadBalancer
+```
+
+Until the first release is tagged, install from a checkout with `helm install dns ./charts/dns --set image.tag=latest --set dashboard.image.tag=latest`. See the [chart's README](charts/dns/README.md) for TLS with cert-manager, per-client rules, ingress for the dashboard, and how to read the generated API token.
+
 ## Running from source
 
 ```sh
@@ -204,7 +215,9 @@ Other web pages can't drive the API through your browser. Requests that carry an
 
 ## Roadmap
 
-- A Helm chart for Kubernetes.
+- Creating and editing client groups from the dashboard, saved across restarts. Today the dashboard shows groups and pauses them, and groups are defined in the config.
+- DNSSEC validation.
+- An opt-in query history that survives restarts.
 
 ## Development
 

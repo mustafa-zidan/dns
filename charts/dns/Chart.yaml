@@ -1,0 +1,18 @@
+apiVersion: v2
+name: dns
+description: An ad-blocking, privacy-focused DNS server, with its web dashboard.
+type: application
+version: 0.1.0
+# The image tag used when image.tag is empty.
+appVersion: "0.1.0"
+home: https://github.com/mustafa-zidan/dns
+sources:
+  - https://github.com/mustafa-zidan/dns
+keywords:
+  - dns
+  - adblock
+  - privacy
+  - dns-over-https
+  - dns-over-tls
+annotations:
+  artifacthub.io/license: MIT OR Apache-2.0

@@ -31,6 +31,9 @@ struct Args {
     /// search tools.
     #[arg(long, env = "DNS_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
     log_format: LogFormat,
+    /// Check the config file and exit, without starting the server.
+    #[arg(long)]
+    check_config: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -57,6 +60,11 @@ async fn main() -> Result<()> {
         Some(path) => Config::load(path)?,
         None => Config::default(),
     };
+    if args.check_config {
+        Clients::new(&config.clients, config.server.timezone.as_deref())?;
+        println!("config is valid");
+        return Ok(());
+    }
 
     let clients = Arc::new(Clients::new(
         &config.clients,
