@@ -12,8 +12,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Stats, pauses and the cache live in each pod's memory, so with more than
-# one replica the dashboard shows whichever pod answers. One is usually enough.
+# Stats, pauses, the cache and sign-in sessions live in each pod's memory, so
+# with more than one replica the dashboard shows whichever pod answers, and a
+# session only works on the pod it started on (API tokens work on any). One
+# is usually enough.
 replicaCount: 1
 
 # The server's config file, written as hushdns.toml. It takes the same keys as
@@ -47,9 +49,22 @@ existingConfigSecret: ""
 api:
   # The HTTP API the dashboard calls.
   enabled: true
-  # Bearer token for the API. Left empty, the chart generates one and keeps
-  # it across upgrades. Read it with the command in the install notes.
+  # Admin bearer token for the API. Left empty, the chart generates one and
+  # keeps it across upgrades. Read it with the command in the install notes.
   token: ""
+  # Accounts for signing in to the dashboard. Make each password_hash with
+  # `docker run --rm -it ghcr.io/mustafa-zidan/hushdns hash-password`. A
+  # viewer can look; an admin can also change settings.
+  users: []
+  #  - name: admin
+  #    role: admin
+  #    password_hash: "$argon2id$v=19$m=19456,t=2,p=1$..."
+  # API tokens for scripts, from `hushdns new-token <name> --role viewer`.
+  # Only the hash goes here.
+  tokens: []
+  #  - name: home-assistant
+  #    role: viewer
+  #    hash: "<64 hex digits>"
   # Extra web origins allowed to call the API from a browser. The
   # dashboard's ingress hosts, and http://localhost:8080 for port-forwarding,
   # are added on their own.

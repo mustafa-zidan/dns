@@ -40,16 +40,26 @@ docker run -d --name hushdns-dashboard -p 8080:8080 \
   ghcr.io/mustafa-zidan/hushdns-dashboard:latest
 ```
 
-On the server, set a token and add the dashboard's address to `api.cors_origins`:
+On the server, set up sign-in and add the dashboard's address to `api.cors_origins`:
 
 ```toml
 [api]
 listen = "0.0.0.0:8053"
-token = "change-me"
 cors_origins = ["http://localhost:8080"]
+
+[[api.users]]
+name = "admin"
+role = "admin"
+password_hash = "..."   # from `hushdns hash-password`
 ```
 
-If you leave `HUSHDNS_API_URL` unset, the dashboard asks each visitor for a server address. It asks for the token on first use and keeps it only in that browser tab.
+If you leave `HUSHDNS_API_URL` unset, the dashboard asks each visitor for a server address.
+
+## Signing in
+
+The dashboard asks for a name and password, or an API token with **Use an API token instead**. It keeps the session or token only in that browser tab, and **Sign out** in the header ends the session on the server. See [Signing in](api.md#signing-in) for accounts, tokens and roles.
+
+A viewer sees every panel, with the buttons that change things turned off. An admin also sees **Recent activity**: sign-ins and the changes made through the API, with who made them.
 
 ## Security
 

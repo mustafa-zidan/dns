@@ -10,6 +10,11 @@ tls:
     dnsNames: [dns.example.com]
 api:
   corsOrigins: ["https://other.example.com"]
+  users:
+    - {name: admin, role: admin, password_hash: "$argon2id$v=19$m=19456,t=2,p=1$yFZ9cpUP4IEpiilyj4ejow$Uc1PuJTVp/tfkd0xARbKcZRtTO/sTTSKkaVSo0Ll5cU"}
+    - {name: family, password_hash: "$argon2id$v=19$m=19456,t=2,p=1$yFZ9cpUP4IEpiilyj4ejow$Uc1PuJTVp/tfkd0xARbKcZRtTO/sTTSKkaVSo0Ll5cU"}
+  tokens:
+    - {name: home-assistant, role: viewer, hash: "4cb34e791dcc6294435eb9e31d2e8e568e955ba189199d82567d07db721a690c"}
   ingress:
     enabled: true
     className: nginx

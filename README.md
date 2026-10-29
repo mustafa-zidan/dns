@@ -149,16 +149,20 @@ docker run -d --name hushdns-dashboard -p 8080:8080 \
   ghcr.io/mustafa-zidan/hushdns-dashboard:latest
 ```
 
-On the server, add the dashboard's address to `api.cors_origins` and set `api.token`:
+On the server, add the dashboard's address to `api.cors_origins` and an account to sign in with:
 
 ```toml
 [api]
 listen = "0.0.0.0:8053"
-token = "change-me"
 cors_origins = ["http://localhost:8080"]
+
+[[api.users]]
+name = "admin"
+role = "admin"
+password_hash = "..."   # from `hushdns hash-password`
 ```
 
-Leave `HUSHDNS_API_URL` unset to have the dashboard ask each visitor for a server address. It asks for the token on first use and keeps it only for that browser tab. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
+Leave `HUSHDNS_API_URL` unset to have the dashboard ask each visitor for a server address. It keeps the session only for that browser tab. Viewers can look but not change anything, and admins see a log of who changed what. The page loads nothing from other sites, and its Content-Security-Policy only lets it call the configured API.
 
 ## Per-client rules
 
@@ -196,11 +200,14 @@ The server sees the address the query arrives from. Behind NAT or a DNS proxy, e
 
 ## HTTP API
 
-The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.token` is set, every request except `/api/health` needs an `Authorization: Bearer <token>` header.
+The server exposes a small JSON API, on `127.0.0.1:8053` by default. Once accounts (`[[api.users]]`), API tokens (`[[api.tokens]]`, from `hushdns new-token`) or `api.token` are set, every request except `/api/health` and `/api/login` needs an `Authorization: Bearer <token>` header. Viewers can make the GET requests; admins can make all of them. See [Signing in](https://mustafa-zidan.github.io/hushdns/api.html#signing-in).
 
 | Method | Path | What it does |
 |---|---|---|
 | GET | `/api/health` | Liveness check |
+| POST | `/api/login` | `{"name", "password"}` starts a session and returns its token |
+| POST | `/api/logout` | Ends the session |
+| GET | `/api/me` | Who the credentials belong to, and their role |
 | GET | `/api/stats?top=10` | Query counts (blocked, cached, forwarded, failed), blocked ratio, top queried and top blocked domains |
 | DELETE | `/api/stats` | Reset the counters |
 | GET | `/api/blocking` | Whether blocking is active, rule counts, last reload and per-list status |
@@ -211,6 +218,7 @@ The server exposes a small JSON API, on `127.0.0.1:8053` by default. If `api.tok
 | PUT | `/api/clients/<name>` | `{"pause_secs": 1800}` gives the group only the shared rules for 30 minutes, `{"pause_secs": 0}` resumes |
 | GET | `/api/cache` | Number of cached answers |
 | DELETE | `/api/cache` | Empty the cache |
+| GET | `/api/audit` | Recent sign-ins and changes, with who made them (admins only) |
 
 ```sh
 curl -s localhost:8053/api/stats | jq
@@ -220,7 +228,7 @@ curl -s -X PUT localhost:8053/api/blocking -H 'content-type: application/json' \
 
 Stats live in memory only and reset on restart. Set `stats.top_domains = false` to keep no per-domain counts at all.
 
-Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address or from one listed in `api.cors_origins`. Without a token, the `Host` must also be an IP address or `localhost`, which stops DNS rebinding. So without a token, reach the API by IP address or `localhost`, not by a hostname.
+Other web pages can't drive the API through your browser. Requests that carry an `Origin` must come from the API's own address or from one listed in `api.cors_origins`. Without credentials configured, the `Host` must also be an IP address or `localhost`, which stops DNS rebinding. So without sign-in set up, reach the API by IP address or `localhost`, not by a hostname.
 
 ## Performance
 
