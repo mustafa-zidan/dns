@@ -80,10 +80,45 @@ export interface CacheStatus {
   entries: number;
 }
 
-/** The server wants a (different) token. */
+export type Role = "viewer" | "admin";
+
+/** Who the dashboard is signed in as. */
+export interface Me {
+  name: string;
+  role: Role;
+  /** A session from signing in, an API token, or nothing when the API is open. */
+  via: "session" | "token" | "open";
+}
+
+export interface Login {
+  token: string;
+  user: Me;
+  expires_in_secs: number;
+}
+
+export interface AuditEvent {
+  /** Unix time, in seconds. */
+  time: number;
+  user: string;
+  action: string;
+  detail: string;
+  address: string | null;
+}
+
+/** The credentials are missing, wrong, or their session has ended. */
 export class Unauthorized extends Error {
   constructor() {
-    super("The server needs an API token");
+    super("The server needs you to sign in");
+  }
+}
+
+/** A response other than 401 that isn't a success. */
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
   }
 }
 
@@ -94,6 +129,24 @@ export class Api {
   constructor(base: string, token: string | null) {
     this.base = base.replace(/\/+$/, "");
     this.token = token;
+  }
+
+  /** Signs in with an account. The returned token goes to `new Api`. */
+  login(name: string, password: string): Promise<Login> {
+    return this.request("login", { method: "POST", body: { name, password } });
+  }
+
+  logout(): Promise<null> {
+    return this.request("logout", { method: "POST" });
+  }
+
+  me(): Promise<Me> {
+    return this.request("me");
+  }
+
+  /** Recent sign-ins and changes, newest first. Admins only. */
+  audit(): Promise<AuditEvent[]> {
+    return this.request("audit");
   }
 
   stats(top = 10): Promise<Stats> {
@@ -162,7 +215,7 @@ export class Api {
     if (response.status === 401) throw new Unauthorized();
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`${response.status}: ${text || response.statusText}`);
+      throw new HttpError(response.status, text || `${response.status} ${response.statusText}`);
     }
     return (response.status === 204 ? null : await response.json()) as T;
   }
