@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Api, loadConfig, Unauthorized } from "./api";
-import type { Blocking, CacheStatus, Clients, Stats } from "./api";
+import { Api, HttpError, loadConfig, Unauthorized } from "./api";
+import type { AuditEvent, Blocking, CacheStatus, Clients, Me, Stats } from "./api";
 import { Dashboard } from "./Dashboard";
 import { Logo } from "./Logo";
 import { duration, parseApiUrl } from "./format";
@@ -15,6 +15,9 @@ export interface Snapshot {
   blocking: Blocking;
   cache: CacheStatus;
   clients: Clients;
+  user: Me;
+  /** Only fetched for admins. */
+  audit: AuditEvent[] | null;
 }
 
 type Connection =
@@ -55,13 +58,15 @@ export function App() {
   const refresh = useCallback(async () => {
     if (!api) return;
     try {
-      const [stats, blocking, cache, clients] = await Promise.all([
+      const [stats, blocking, cache, clients, user] = await Promise.all([
         api.stats(),
         api.blocking(),
         api.cache(),
         api.clients(),
+        api.me(),
       ]);
-      setSnapshot({ stats, blocking, cache, clients });
+      const audit = user.role === "admin" ? await api.audit() : null;
+      setSnapshot({ stats, blocking, cache, clients, user, audit });
       setNeedsToken(false);
       setError(null);
     } catch (e) {
@@ -95,6 +100,15 @@ export function App() {
     setNeedsToken(false);
   };
 
+  const signOut = async () => {
+    // Ends the session on the server; an API token just stays configured.
+    if (api && snapshot?.user.via === "session") await api.logout().catch(() => undefined);
+    saveToken(null);
+    setToken(null);
+    setSnapshot(null);
+    setNeedsToken(true);
+  };
+
   const connect = (url: string) => {
     saveApiUrl(url);
     setSnapshot(null);
@@ -111,12 +125,15 @@ export function App() {
     setConnection({ kind: "setup" });
   };
 
+  const user = needsToken ? null : (snapshot?.user ?? null);
   return (
     <>
       <Header
         blocking={needsToken ? null : (snapshot?.blocking ?? null)}
         status={connection.kind === "setup" ? "Not connected" : needsToken ? "Signed out" : "Connecting"}
-        disabled={!api || needsToken || !snapshot}
+        user={user}
+        onSignOut={signOut}
+        disabled={!api || needsToken || !snapshot || user?.role !== "admin"}
         onChange={async (enabled, pauseSecs) => {
           if (!api) return;
           try {
@@ -130,7 +147,7 @@ export function App() {
       <main>
         {error && <p className="error">{error}</p>}
         {connection.kind === "setup" && <ServerForm onSubmit={connect} />}
-        {connection.kind === "ready" && needsToken && <TokenForm apiUrl={connection.apiUrl} onSubmit={signIn} />}
+        {connection.kind === "ready" && needsToken && <SignInForm apiUrl={connection.apiUrl} onSignIn={signIn} />}
         {api && !needsToken && snapshot && (
           <Dashboard api={api} snapshot={snapshot} refresh={refresh} fail={fail} />
         )}
@@ -156,10 +173,12 @@ function Header(props: {
   blocking: Blocking | null;
   /** Shown while there is no blocking state to show. */
   status: string;
+  user: Me | null;
+  onSignOut: () => Promise<void>;
   disabled: boolean;
   onChange: (enabled: boolean, pauseSecs?: number) => Promise<void>;
 }) {
-  const { blocking, status, disabled, onChange } = props;
+  const { blocking, status, user, onSignOut, disabled, onChange } = props;
   const [busy, setBusy] = useState(false);
   const run = async (enabled: boolean, pauseSecs?: number) => {
     setBusy(true);
@@ -197,6 +216,17 @@ function Header(props: {
               <option value="3600">1 hour</option>
             </select>
           )}
+        </div>
+      )}
+      {user && user.via !== "open" && (
+        <div className="user">
+          <span className="muted">
+            {user.via === "token" ? "Token" : "Signed in as"} <strong>{user.name}</strong>
+            {user.role === "viewer" && " (view only)"}
+          </span>
+          <button type="button" className="secondary" onClick={onSignOut}>
+            Sign out
+          </button>
         </div>
       )}
     </header>
@@ -237,31 +267,89 @@ function ServerForm(props: { onSubmit: (url: string) => void }) {
   );
 }
 
-function TokenForm(props: { apiUrl: string; onSubmit: (token: string) => void }) {
-  const [value, setValue] = useState("");
+function SignInForm(props: { apiUrl: string; onSignIn: (token: string) => void }) {
+  const [mode, setMode] = useState<"account" | "token">("account");
+  const [name, setName] = useState("");
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (mode === "token") {
+      props.onSignIn(secret);
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    try {
+      const login = await new Api(props.apiUrl, null).login(name, secret);
+      props.onSignIn(login.token);
+    } catch (e) {
+      if (e instanceof Unauthorized) setProblem("Wrong name or password.");
+      else if (e instanceof HttpError && e.status === 404) {
+        setMode("token");
+        setProblem("This server has no user accounts. Sign in with an API token.");
+      } else setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      setSecret("");
+    }
+  };
+
+  const switchTo = (next: "account" | "token") => {
+    setMode(next);
+    setSecret("");
+    setProblem(null);
+  };
+
   return (
     <form
-      className="card"
+      className="card signin"
       onSubmit={(e) => {
         e.preventDefault();
-        if (value) props.onSubmit(value);
+        if (secret) submit();
       }}
     >
       <h2>Sign in</h2>
-      <p className="muted">{props.apiUrl} needs its API token. It is kept in this tab only.</p>
-      <div className="row">
+      <p className="muted">
+        {mode === "account"
+          ? `Sign in to ${props.apiUrl}.`
+          : `Enter an API token for ${props.apiUrl}.`}{" "}
+        It is kept in this tab only.
+      </p>
+      {mode === "account" && (
         <input
-          type="password"
-          autoComplete="current-password"
-          placeholder="API token"
-          aria-label="API token"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
+          type="text"
+          autoComplete="username"
+          placeholder="Name"
+          aria-label="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
           autoFocus
           required
         />
-        <button type="submit">Sign in</button>
+      )}
+      <div className="row">
+        <input
+          type="password"
+          autoComplete={mode === "account" ? "current-password" : "off"}
+          placeholder={mode === "account" ? "Password" : "API token"}
+          aria-label={mode === "account" ? "Password" : "API token"}
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          autoFocus={mode === "token"}
+          required
+        />
+        <button type="submit" disabled={busy}>
+          Sign in
+        </button>
       </div>
+      <p className="verdict blocked" aria-live="polite">
+        {problem}
+      </p>
+      <button type="button" className="link" onClick={() => switchTo(mode === "account" ? "token" : "account")}>
+        {mode === "account" ? "Use an API token instead" : "Sign in with a name and password"}
+      </button>
     </form>
   );
 }

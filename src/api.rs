@@ -1,19 +1,26 @@
 //! HTTP API for stats and runtime control.
 //!
-//! | Method | Path                    | What it does                                   |
-//! |--------|-------------------------|------------------------------------------------|
-//! | GET    | `/api/health`           | Liveness check                                 |
-//! | GET    | `/api/stats?top=N`      | Query counters and top domains                 |
-//! | DELETE | `/api/stats`            | Reset the counters                             |
-//! | GET    | `/api/blocking`         | Blocking state, rule counts, per-list status   |
-//! | PUT    | `/api/blocking`         | `{"enabled": bool, "pause_secs": n}`           |
-//! | POST   | `/api/blocking/reload`  | Re-download the blocklists now                 |
-//! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by which rule.  |
-//! |        | `&client=192.168.1.20`  | Optionally, for that client's rules            |
-//! | GET    | `/api/clients`          | Client groups, their lists and schedules       |
-//! | PUT    | `/api/clients/{name}`   | `{"pause_secs": n}` pauses a group, 0 resumes  |
-//! | GET    | `/api/cache`            | Number of cached answers                       |
-//! | DELETE | `/api/cache`            | Empty the cache                                |
+//! | Method | Path                    | What it does                          | Role   |
+//! |--------|-------------------------|---------------------------------------|--------|
+//! | GET    | `/api/health`           | Liveness check                        | none   |
+//! | POST   | `/api/login`            | `{"name", "password"}` starts a session | none |
+//! | POST   | `/api/logout`           | Ends the session                      | any    |
+//! | GET    | `/api/me`               | Who the credentials belong to         | any    |
+//! | GET    | `/api/stats?top=N`      | Query counters and top domains        | viewer |
+//! | DELETE | `/api/stats`            | Reset the counters                    | admin  |
+//! | GET    | `/api/blocking`         | Blocking state, rule counts, lists    | viewer |
+//! | PUT    | `/api/blocking`         | `{"enabled": bool, "pause_secs": n}`  | admin  |
+//! | POST   | `/api/blocking/reload`  | Re-download the blocklists now        | admin  |
+//! | GET    | `/api/check?name=x`     | Whether a name is blocked, and by     | viewer |
+//! |        | `&client=192.168.1.20`  | which rule, optionally for a client   |        |
+//! | GET    | `/api/clients`          | Client groups, lists and schedules    | viewer |
+//! | PUT    | `/api/clients/{name}`   | `{"pause_secs": n}`; 0 resumes        | admin  |
+//! | GET    | `/api/cache`            | Number of cached answers              | viewer |
+//! | DELETE | `/api/cache`            | Empty the cache                       | admin  |
+//! | GET    | `/api/audit`            | Recent sign-ins and changes           | admin  |
+//!
+//! Reading needs the viewer role and every other method needs admin; see
+//! [`crate::auth`] for the credentials.
 //!
 //! The web dashboard is a separate app (see `web/`) that calls this API from
 //! the origins listed in `api.cors_origins`.
@@ -23,18 +30,18 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use axum::extract::Path;
-use axum::extract::{Query, Request, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 
+use crate::auth::{Auth, Event, LoginError, Principal, Role, Via};
 use crate::blocklist::{Blocklist, SourceStatus};
 use crate::cache::Cache;
 use crate::clients::ClientStatus;
@@ -48,7 +55,7 @@ pub struct ApiState {
     pub blocklist: Arc<Blocklist>,
     pub cache: Arc<Cache>,
     pub stats: Arc<Stats>,
-    pub token: Option<Arc<str>>,
+    pub auth: Arc<Auth>,
     /// Normalized origins (`scheme://host[:port]`) allowed to call the API
     /// from a browser.
     pub cors_origins: Arc<[String]>,
@@ -59,16 +66,19 @@ pub async fn serve(listen: SocketAddr, state: ApiState) -> Result<()> {
     let listener = TcpListener::bind(listen)
         .await
         .with_context(|| format!("binding API on {listen}"))?;
-    if state.token.is_none() && !listen.ip().is_loopback() {
-        warn!(%listen, "the API is reachable from the network without a token; set api.token");
+    if !state.auth.required() && !listen.ip().is_loopback() {
+        warn!(%listen, "the API is reachable from the network without sign-in; set api.users or api.tokens");
     }
     info!(%listen, "API listening");
-    axum::serve(listener, router(state)).await?;
+    // Client addresses are for limiting failed sign-ins.
+    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
 pub fn router(state: ApiState) -> Router {
-    let api = Router::new()
+    // Reading needs a viewer, anything else an admin.
+    let control = Router::new()
         .route("/stats", get(get_stats).delete(reset_stats))
         .route("/blocking", get(get_blocking).put(set_blocking))
         .route("/blocking/reload", post(reload_blocking))
@@ -76,13 +86,25 @@ pub fn router(state: ApiState) -> Router {
         .route("/clients", get(get_clients))
         .route("/clients/{name}", put(set_client))
         .route("/cache", get(get_cache).delete(clear_cache))
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .route_layer(middleware::from_fn(authorize_by_method));
+    let admin = Router::new()
+        .route("/audit", get(get_audit))
+        .route_layer(middleware::from_fn(authorize_admin));
+    let signed_in = Router::new()
+        .route("/me", get(me))
+        .route("/logout", post(logout))
+        .merge(control)
+        .merge(admin)
+        .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
+    let public = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/login", post(login));
     let router = Router::new()
-        .route("/api/health", get(|| async { "ok" }))
-        .nest("/api", api)
+        .nest("/api", signed_in.merge(public))
         .layer(middleware::from_fn_with_state(state.clone(), guard_browser))
         .layer(middleware::from_fn(security_headers));
-    // Outermost, so preflight requests are answered before the token check.
+    // Outermost, so preflight requests are answered before the credentials
+    // check.
     let router = match cors(&state.cors_origins) {
         Some(cors) => router.layer(cors),
         None => router,
@@ -128,15 +150,19 @@ async fn security_headers(request: Request, next: Next) -> Response {
 ///
 /// A request with an `Origin` must come from the API's own origin or one in
 /// `api.cors_origins`, which blocks cross-site form posts (CORS alone only
-/// hides the response, it does not stop the request). Without a token, the
-/// `Host` must also be an
-/// IP address or `localhost`: a page on a hostile domain that it re-points at
-/// 127.0.0.1 (DNS rebinding) still sends its own name as the host.
+/// hides the response, it does not stop the request). Without credentials
+/// configured, the `Host` must also be an IP address or `localhost`: a page on
+/// a hostile domain that it re-points at 127.0.0.1 (DNS rebinding) still
+/// sends its own name as the host.
 async fn guard_browser(State(state): State<ApiState>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if state.token.is_none() && !host.is_some_and(is_ip_or_localhost) {
-        return (StatusCode::FORBIDDEN, "set api.token to use a hostname").into_response();
+    if !state.auth.required() && !host.is_some_and(is_ip_or_localhost) {
+        return (
+            StatusCode::FORBIDDEN,
+            "set up sign-in (api.users or api.tokens) to use a hostname",
+        )
+            .into_response();
     }
     if !allowed_origin(headers, host, &state.cors_origins) {
         return (StatusCode::FORBIDDEN, "cross-origin request").into_response();
@@ -168,32 +194,129 @@ fn is_ip_or_localhost(host: &str) -> bool {
     name.eq_ignore_ascii_case("localhost") || name.parse::<IpAddr>().is_ok()
 }
 
-async fn require_token(State(state): State<ApiState>, request: Request, next: Next) -> Response {
-    let Some(token) = &state.token else {
-        return next.run(request).await;
-    };
-    let presented = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    match presented {
-        Some(presented) if constant_time_eq(presented.as_bytes(), token.as_bytes()) => {
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+}
+
+/// Finds who sent the request, for the handlers and the role checks.
+async fn authenticate(State(state): State<ApiState>, mut request: Request, next: Next) -> Response {
+    match state.auth.authenticate(bearer(request.headers())) {
+        Some(principal) => {
+            request.extensions_mut().insert(principal);
             next.run(request).await
         }
-        _ => (
+        None => (
             StatusCode::UNAUTHORIZED,
             [(header::WWW_AUTHENTICATE, "Bearer")],
-            "missing or invalid token",
+            "missing, invalid or expired credentials",
         )
             .into_response(),
     }
 }
 
-/// Compares without returning early, so response timing does not reveal how
-/// much of the token was right.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+async fn authorize_by_method(request: Request, next: Next) -> Response {
+    let needed = if request.method().is_safe() {
+        Role::Viewer
+    } else {
+        Role::Admin
+    };
+    authorize(needed, request, next).await
+}
+
+async fn authorize_admin(request: Request, next: Next) -> Response {
+    authorize(Role::Admin, request, next).await
+}
+
+async fn authorize(needed: Role, request: Request, next: Next) -> Response {
+    let role = request.extensions().get::<Principal>().map(|p| p.role);
+    if role.is_some_and(|role| role >= needed) {
+        next.run(request).await
+    } else {
+        (StatusCode::FORBIDDEN, "this needs the admin role").into_response()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoginRequest {
+    name: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct Me {
+    name: String,
+    role: Role,
+    via: Via,
+}
+
+impl From<&Principal> for Me {
+    fn from(principal: &Principal) -> Self {
+        Self {
+            name: principal.name.to_string(),
+            role: principal.role,
+            via: principal.via,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LoginResponse {
+    /// Send as `Authorization: Bearer <token>`.
+    token: String,
+    user: Me,
+    /// The longest the session can last. It ends sooner when unused for
+    /// `api.session_idle_secs`.
+    expires_in_secs: u64,
+}
+
+async fn login(
+    State(state): State<ApiState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Json(body): Json<LoginRequest>,
+) -> Response {
+    let address = peer.map(|Extension(ConnectInfo(addr))| addr.ip());
+    match state.auth.login(&body.name, &body.password, address).await {
+        Ok(login) => Json(LoginResponse {
+            token: login.token,
+            user: Me::from(&login.principal),
+            expires_in_secs: login.expires_in.as_secs(),
+        })
+        .into_response(),
+        Err(LoginError::Invalid) => {
+            (StatusCode::UNAUTHORIZED, "wrong name or password").into_response()
+        }
+        Err(LoginError::Limited(wait)) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, (wait.as_secs() + 1).to_string())],
+            "too many failed sign-ins; try again later",
+        )
+            .into_response(),
+        Err(LoginError::NoAccounts) => (
+            StatusCode::NOT_FOUND,
+            "this server has no user accounts; use an API token",
+        )
+            .into_response(),
+    }
+}
+
+async fn logout(State(state): State<ApiState>, headers: HeaderMap) -> StatusCode {
+    if let Some(bearer) = bearer(&headers) {
+        state.auth.logout(bearer);
+    }
+    StatusCode::NO_CONTENT
+}
+
+async fn me(Extension(principal): Extension<Principal>) -> Json<Me> {
+    Json(Me::from(&principal))
+}
+
+async fn get_audit(State(state): State<ApiState>) -> Json<Vec<Event>> {
+    Json(state.auth.audit().recent())
 }
 
 #[derive(Deserialize)]
@@ -209,8 +332,15 @@ async fn get_stats(
     Json(state.stats.snapshot(top))
 }
 
-async fn reset_stats(State(state): State<ApiState>) -> StatusCode {
+async fn reset_stats(
+    State(state): State<ApiState>,
+    Extension(by): Extension<Principal>,
+) -> StatusCode {
     state.stats.reset();
+    state
+        .auth
+        .audit()
+        .record(&by.name, "stats reset", String::new());
     StatusCode::NO_CONTENT
 }
 
@@ -256,6 +386,7 @@ struct SetBlocking {
 
 async fn set_blocking(
     State(state): State<ApiState>,
+    Extension(by): Extension<Principal>,
     Json(body): Json<SetBlocking>,
 ) -> Result<Json<BlockingStatus>, (StatusCode, &'static str)> {
     match (body.enabled, body.pause_secs) {
@@ -268,15 +399,26 @@ async fn set_blocking(
         (false, Some(secs)) => state.blocklist.pause(Duration::from_secs(secs)),
         (enabled, None) => state.blocklist.set_enabled(enabled),
     }
-    info!(
-        enabled = body.enabled,
-        pause_secs = body.pause_secs,
-        "blocking changed through the API"
-    );
+    let detail = match (body.enabled, body.pause_secs) {
+        (true, _) => "on".to_owned(),
+        (false, Some(secs)) => format!("paused for {secs} s"),
+        (false, None) => "off".to_owned(),
+    };
+    state
+        .auth
+        .audit()
+        .record(&by.name, "blocking changed", detail);
     Ok(Json(blocking_status(&state.blocklist)))
 }
 
-async fn reload_blocking(State(state): State<ApiState>) -> Json<BlockingStatus> {
+async fn reload_blocking(
+    State(state): State<ApiState>,
+    Extension(by): Extension<Principal>,
+) -> Json<BlockingStatus> {
+    state
+        .auth
+        .audit()
+        .record(&by.name, "blocklists reloaded", String::new());
     state.blocklist.reload().await;
     Json(blocking_status(&state.blocklist))
 }
@@ -348,6 +490,7 @@ struct SetClient {
 
 async fn set_client(
     State(state): State<ApiState>,
+    Extension(by): Extension<Principal>,
     Path(name): Path<String>,
     Json(body): Json<SetClient>,
 ) -> Result<Json<ClientStatus>, (StatusCode, &'static str)> {
@@ -356,11 +499,14 @@ async fn set_client(
         .get(&name)
         .ok_or((StatusCode::NOT_FOUND, "no client group with that name"))?;
     group.pause(Duration::from_secs(body.pause_secs));
-    info!(
-        client = name,
-        pause_secs = body.pause_secs,
-        "client rules changed through the API"
-    );
+    let detail = match body.pause_secs {
+        0 => format!("{name} resumed"),
+        secs => format!("{name} paused for {secs} s"),
+    };
+    state
+        .auth
+        .audit()
+        .record(&by.name, "client group changed", detail);
     Ok(Json(group.status(clients.now())))
 }
 
@@ -375,21 +521,21 @@ async fn get_cache(State(state): State<ApiState>) -> Json<CacheStatus> {
     })
 }
 
-async fn clear_cache(State(state): State<ApiState>) -> StatusCode {
+async fn clear_cache(
+    State(state): State<ApiState>,
+    Extension(by): Extension<Principal>,
+) -> StatusCode {
     state.cache.clear();
+    state
+        .auth
+        .audit()
+        .record(&by.name, "cache cleared", String::new());
     StatusCode::NO_CONTENT
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn compares_tokens() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"secreT"));
-        assert!(!constant_time_eq(b"secret", b"secret2"));
-    }
 
     #[test]
     fn recognises_ip_hosts() {

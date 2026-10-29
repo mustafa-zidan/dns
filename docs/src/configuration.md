@@ -18,7 +18,7 @@ hushdns --check-config --config hushdns.toml
 | `[cache]` | Cache size and TTL limits | |
 | `[blocking]` | Lists, deny and allow lists, how blocked names are answered | [Blocklists](blocklists.md) |
 | `[[clients]]` | Rules and schedules for some devices | [Per-client rules](clients.md) |
-| `[api]` | HTTP API address, token and allowed web origins | [HTTP API](api.md) |
+| `[api]` | HTTP API address, allowed web origins, accounts, API tokens and sessions | [HTTP API](api.md) |
 | `[stats]` | Whether to count queries per domain | [Privacy](privacy.md) |
 
 ## Environment variables

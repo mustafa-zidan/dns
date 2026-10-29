@@ -1,15 +1,16 @@
-use std::io::IsTerminal;
+use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use tokio_rustls::TlsAcceptor;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 use hushdns::api::{self, ApiState};
+use hushdns::auth::{self, Auth, Role};
 use hushdns::blocklist::Blocklist;
 use hushdns::cache::Cache;
 use hushdns::certs::CertStore;
@@ -38,6 +39,23 @@ struct Args {
     /// Check the config file and exit, without starting the server.
     #[arg(long)]
     check_config: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Hash a password for an account in api.users. Asks for the password,
+    /// or reads one line from standard input when it isn't a terminal.
+    HashPassword,
+    /// Make an API token for api.tokens, for scripts and other programs.
+    NewToken {
+        /// Shown in the audit log, such as "home-assistant".
+        name: String,
+        /// What the token may do: viewer reads, admin also changes things.
+        #[arg(long, default_value_t = Role::Viewer)]
+        role: Role,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -49,6 +67,14 @@ enum LogFormat {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    match &args.command {
+        Some(Command::HashPassword) => return hash_password(),
+        Some(Command::NewToken { name, role }) => {
+            new_token(name, *role);
+            return Ok(());
+        }
+        None => {}
+    }
     let filter = EnvFilter::try_from_env("HUSHDNS_LOG").unwrap_or_else(|_| "info".into());
     let logs = tracing_subscriber::fmt().with_env_filter(filter);
     match args.log_format {
@@ -64,6 +90,7 @@ async fn main() -> Result<()> {
         Some(path) => Config::load(path)?,
         None => Config::default(),
     };
+    let auth = Arc::new(Auth::new(&config.api)?);
     if args.check_config {
         Clients::new(&config.clients, config.server.timezone.as_deref())?;
         println!("config is valid");
@@ -102,7 +129,7 @@ async fn main() -> Result<()> {
             blocklist,
             cache,
             stats,
-            token: config.api.token.as_deref().map(Arc::from),
+            auth,
             cors_origins: config.api.cors_origins.clone().into(),
         };
         api::serve(config.api.listen, state).await
@@ -154,6 +181,40 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn hash_password() -> Result<()> {
+    let password = if std::io::stdin().is_terminal() {
+        let password = rpassword::prompt_password("Password: ")?;
+        anyhow::ensure!(
+            rpassword::prompt_password("Again: ")? == password,
+            "the passwords don't match"
+        );
+        password
+    } else {
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        line.trim_end_matches(['\r', '\n']).to_owned()
+    };
+    anyhow::ensure!(
+        password.chars().count() >= 8,
+        "use a password of at least 8 characters"
+    );
+    println!("{}", auth::hash_password(&password)?);
+    Ok(())
+}
+
+fn new_token(name: &str, role: Role) {
+    let (token, hash) = auth::new_token();
+    println!("Token (shown only now; send it as \"Authorization: Bearer <token>\"):");
+    println!("{token}");
+    println!();
+    println!("Add this to hushdns.toml and restart the server:");
+    println!();
+    println!("[[api.tokens]]");
+    println!("name = {}", toml::Value::from(name));
+    println!("role = \"{role}\"");
+    println!("hash = \"{hash}\"");
 }
 
 async fn shutdown_signal() {

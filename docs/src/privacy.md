@@ -19,4 +19,4 @@ hushdns is meant to keep what you look up between you and the resolver you chose
 
 ## The dashboard
 
-The dashboard loads nothing from other sites, keeps its token only in that browser tab, and can only call the API it's configured for. See [Dashboard](dashboard.md#security).
+The dashboard loads nothing from other sites, keeps its session or token only in that browser tab, and can only call the API it's configured for. See [Dashboard](dashboard.md#security).

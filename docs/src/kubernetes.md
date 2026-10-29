@@ -55,13 +55,31 @@ config:
 
 To manage the whole file yourself, put it in a Secret under the `hushdns.toml` key and set `existingConfigSecret`.
 
-## API token and dashboard
+## Signing in and the dashboard
 
 In the cluster, the API always needs a token. Set `api.token`, or let the chart generate one, which it keeps across upgrades. Read it with:
 
 ```sh
 kubectl get secret hushdns -o jsonpath='{.data.api-token}' | base64 -d; echo
 ```
+
+That token is an admin token. To sign in with a name and password instead, add accounts, and give scripts their own read-only tokens:
+
+```yaml
+api:
+  users:
+    - name: admin
+      role: admin
+      password_hash: "$argon2id$v=19$m=19456,t=2,p=1$..."   # docker run --rm -it ghcr.io/mustafa-zidan/hushdns hash-password
+    - name: family
+      password_hash: "$argon2id$..."                       # a viewer: can look, not change
+  tokens:
+    - name: home-assistant
+      role: viewer
+      hash: "4cb34e79..."                                   # from hushdns new-token home-assistant
+```
+
+Sessions live in the pod's memory, so with more than one replica a session only works on the pod it started on. See [Signing in](https://mustafa-zidan.github.io/hushdns/api.html#signing-in).
 
 The dashboard runs in your browser and calls the API directly, so your browser has to reach both. Without an ingress, port-forward both and open <http://localhost:8080>:
 

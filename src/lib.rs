@@ -1,6 +1,7 @@
 //! An ad-blocking, privacy-focused forwarding DNS server.
 
 pub mod api;
+pub mod auth;
 pub mod blocklist;
 pub mod cache;
 pub mod certs;

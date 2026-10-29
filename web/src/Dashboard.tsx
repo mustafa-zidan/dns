@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { Api, Blocking, CheckResult, ClientGroup, Clients, DomainCount } from "./api";
+import type { Api, AuditEvent, Blocking, CheckResult, ClientGroup, Clients, DomainCount } from "./api";
 import type { Snapshot } from "./App";
 import { count, days, duration, percent } from "./format";
 
@@ -14,8 +14,10 @@ export function Dashboard(props: {
   fail: (e: unknown) => void;
 }) {
   const { api, snapshot, refresh, fail } = props;
-  const { stats, blocking, cache, clients } = snapshot;
+  const { stats, blocking, cache, clients, user, audit } = snapshot;
   const q = stats.queries;
+  // Viewers see every panel, with the controls that change things disabled.
+  const locked = user.role !== "admin";
 
   // Runs an action, then refreshes so every panel shows its effect.
   const act = async (action: () => Promise<unknown>) => {
@@ -55,8 +57,11 @@ export function Dashboard(props: {
             <dd>{count(cache.entries)}</dd>
           </dl>
           <div className="row">
-            <ActionButton onClick={() => act(() => api.clearCache())}>Clear cache</ActionButton>
+            <ActionButton locked={locked} onClick={() => act(() => api.clearCache())}>
+              Clear cache
+            </ActionButton>
             <ActionButton
+              locked={locked}
               onClick={() => (confirm("Reset all query counters?") ? act(() => api.resetStats()) : Promise.resolve())}
             >
               Reset stats
@@ -66,10 +71,12 @@ export function Dashboard(props: {
       </section>
 
       {clients.groups.length > 0 && (
-        <ClientGroups clients={clients} onPause={(name, secs) => act(() => api.pauseClient(name, secs))} />
+        <ClientGroups clients={clients} locked={locked} onPause={(name, secs) => act(() => api.pauseClient(name, secs))} />
       )}
 
-      <Blocklists blocking={blocking} onReload={() => act(() => api.reload())} />
+      <Blocklists blocking={blocking} locked={locked} onReload={() => act(() => api.reload())} />
+
+      {audit && <Activity events={audit} />}
     </div>
   );
 }
@@ -96,14 +103,15 @@ function Card(props: { title: string; action?: ReactNode; children: ReactNode })
   );
 }
 
-/** A secondary button that stays disabled while its action runs. */
-function ActionButton(props: { onClick: () => Promise<void>; children: ReactNode }) {
+/** A secondary button that stays disabled while its action runs, and for viewers. */
+function ActionButton(props: { onClick: () => Promise<void>; locked?: boolean; children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
       className="secondary"
-      disabled={busy}
+      disabled={busy || props.locked}
+      title={props.locked ? "Needs the admin role" : undefined}
       onClick={async () => {
         setBusy(true);
         try {
@@ -192,7 +200,11 @@ function verdict(result: CheckResult): string {
 
 const PAUSE_SECS = 3600;
 
-function ClientGroups(props: { clients: Clients; onPause: (name: string, secs: number) => Promise<void> }) {
+function ClientGroups(props: {
+  clients: Clients;
+  locked: boolean;
+  onPause: (name: string, secs: number) => Promise<void>;
+}) {
   return (
     <Card title="Client groups">
       <ul className="groups">
@@ -208,9 +220,13 @@ function ClientGroups(props: { clients: Clients; onPause: (name: string, secs: n
                   {group.paused_for_secs ? `Paused, ${duration(group.paused_for_secs)} left` : "Active"}
                 </span>
                 {group.paused_for_secs ? (
-                  <ActionButton onClick={() => props.onPause(group.name, 0)}>Resume</ActionButton>
+                  <ActionButton locked={props.locked} onClick={() => props.onPause(group.name, 0)}>
+                    Resume
+                  </ActionButton>
                 ) : (
-                  <ActionButton onClick={() => props.onPause(group.name, PAUSE_SECS)}>Pause 1h</ActionButton>
+                  <ActionButton locked={props.locked} onClick={() => props.onPause(group.name, PAUSE_SECS)}>
+                    Pause 1h
+                  </ActionButton>
                 )}
               </div>
             </div>
@@ -244,10 +260,15 @@ function rules(group: ClientGroup): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function Blocklists(props: { blocking: Blocking; onReload: () => Promise<void> }) {
+function Blocklists(props: { blocking: Blocking; locked: boolean; onReload: () => Promise<void> }) {
   const { blocking } = props;
+  const reload = (
+    <ActionButton locked={props.locked} onClick={props.onReload}>
+      Reload now
+    </ActionButton>
+  );
   return (
-    <Card title="Blocklists" action={<ActionButton onClick={props.onReload}>Reload now</ActionButton>}>
+    <Card title="Blocklists" action={reload}>
       <dl className="facts">
         <dt>Blocked domains</dt>
         <dd>{count(blocking.blocked_domains)}</dd>
@@ -283,6 +304,36 @@ function Blocklists(props: { blocking: Blocking; onReload: () => Promise<void> }
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+}
+
+const SHOWN_EVENTS = 20;
+
+/** Recent sign-ins and changes, for admins. */
+function Activity(props: { events: AuditEvent[] }) {
+  const events = props.events.slice(0, SHOWN_EVENTS);
+  return (
+    <Card title="Recent activity">
+      {events.length === 0 ? (
+        <p className="empty">Nothing yet</p>
+      ) : (
+        <ul className="audit">
+          {events.map((event, i) => (
+            <li key={`${event.time}-${i}`}>
+              <time dateTime={new Date(event.time * 1000).toISOString()}>
+                {new Date(event.time * 1000).toLocaleString()}
+              </time>
+              <span>
+                <strong>{event.user}</strong> {event.action}
+                {event.detail && `: ${event.detail}`}
+                {event.address && <span className="muted"> from {event.address}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="note">Kept in the server's memory and logs. A restart clears this list.</p>
     </Card>
   );
 }

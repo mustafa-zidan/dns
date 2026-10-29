@@ -117,6 +117,8 @@ app.kubernetes.io/component: dashboard
 {{- end }}
 {{- $origins = concat $origins $v.api.corsOrigins | uniq }}
 {{- $api := dict "enabled" $v.api.enabled "listen" "0.0.0.0:8053" "token" .token "cors_origins" $origins }}
+{{- with $v.api.users }}{{ $_ := set $api "users" . }}{{ end }}
+{{- with $v.api.tokens }}{{ $_ := set $api "tokens" . }}{{ end }}
 {{- $_ := set $config "api" $api }}
 {{- if $v.tls.enabled }}
 {{- $tls := dict "cert_file" "/etc/hushdns/tls/tls.crt" "key_file" "/etc/hushdns/tls/tls.key" "doh_path" $v.tls.dohPath }}

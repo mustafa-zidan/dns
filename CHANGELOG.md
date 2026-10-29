@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- Sign-in with user accounts for the dashboard and the API (#29). Accounts in `[[api.users]]` have Argon2id password hashes, made with `hushdns hash-password`, and sign in for a session that ends on sign-out, after 8 hours idle, or after 7 days. API tokens for scripts go in `[[api.tokens]]` as SHA-256 hashes, made with `hushdns new-token`. Each account and token is a viewer, who can look, or an admin, who can also change things. `api.token` still works, as an admin token.
+- Failed sign-ins are limited per account and per address, and password checks can't take over the CPU that answers queries.
+- An audit log of sign-ins and changes made through the API, naming who made them, logged with the target `hushdns::audit` and shown to admins in the dashboard's Recent activity panel.
+- The Helm chart takes `api.users` and `api.tokens`.
+
 ### Changed
 
 - hushdns is now licensed under the GNU General Public License, version 3 or later (GPL-3.0-or-later), instead of MIT OR Apache-2.0. Releases 0.0.1 and 0.0.2 stay available under MIT OR Apache-2.0. The dashboard footer links to the license and the source code.
