@@ -7,6 +7,7 @@ use ipnet::IpNet;
 use jiff::civil::{Time, Weekday};
 use serde::Deserialize;
 
+use crate::auth::{self, Role};
 use crate::upstream::UpstreamAddr;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -307,13 +308,44 @@ fn parse_net(text: &str) -> Result<IpNet, String> {
 #[serde(default, deny_unknown_fields)]
 pub struct ApiConfig {
     pub enabled: bool,
-    /// Where the HTTP API listens. Keep it on loopback unless `token` is set.
+    /// Where the HTTP API listens. Keep it on loopback unless sign-in is set
+    /// up with `users`, `tokens` or `token`.
     pub listen: SocketAddr,
-    /// When set, every API request must send `Authorization: Bearer <token>`.
+    /// A single admin token, sent as `Authorization: Bearer <token>`. Kept
+    /// for existing setups; `tokens` can be named, hashed and read-only.
     pub token: Option<String>,
     /// Web origins allowed to call the API from a browser, such as the
     /// dashboard's address (`http://localhost:8080`). Empty allows none.
     pub cors_origins: Vec<String>,
+    /// Accounts that sign in to the dashboard with a name and password.
+    pub users: Vec<UserConfig>,
+    /// API tokens for scripts and other programs.
+    pub tokens: Vec<TokenConfig>,
+    /// A session from signing in ends after this long without a request...
+    pub session_idle_secs: u64,
+    /// ...and after this long in any case.
+    pub session_max_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserConfig {
+    pub name: String,
+    /// Argon2id hash in PHC format, from `hushdns hash-password`.
+    pub password_hash: String,
+    #[serde(default)]
+    pub role: Role,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenConfig {
+    /// Shown in the audit log.
+    pub name: String,
+    /// SHA-256 of the token in hex, from `hushdns new-token`.
+    pub hash: String,
+    #[serde(default)]
+    pub role: Role,
 }
 
 impl Default for ApiConfig {
@@ -323,6 +355,10 @@ impl Default for ApiConfig {
             listen: "127.0.0.1:8053".parse().unwrap(),
             token: None,
             cors_origins: Vec::new(),
+            users: Vec::new(),
+            tokens: Vec::new(),
+            session_idle_secs: 8 * 3600,
+            session_max_secs: 7 * 86_400,
         }
     }
 }
@@ -359,10 +395,6 @@ impl Config {
         anyhow::ensure!(
             !config.upstream.servers.is_empty(),
             "upstream.servers is empty"
-        );
-        anyhow::ensure!(
-            config.api.token.as_deref() != Some(""),
-            "api.token is empty; remove it or set a value"
         );
         if config.tls.enabled() {
             anyhow::ensure!(
@@ -413,11 +445,54 @@ impl Config {
             jiff::tz::TimeZone::get(zone)
                 .with_context(|| format!("server.timezone: {zone:?} is not a known time zone"))?;
         }
+        config.api.check_credentials()?;
         for origin in &mut config.api.cors_origins {
             *origin = parse_origin(origin)
                 .with_context(|| format!("api.cors_origins: {origin:?} is not a web origin"))?;
         }
         Ok(config)
+    }
+}
+
+impl ApiConfig {
+    fn check_credentials(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.token.as_deref() != Some(""),
+            "api.token is empty; remove it or set a value"
+        );
+        anyhow::ensure!(
+            self.session_idle_secs > 0 && self.session_max_secs > 0,
+            "api.session_idle_secs and api.session_max_secs must be positive"
+        );
+        let mut names = std::collections::HashSet::new();
+        for user in &self.users {
+            anyhow::ensure!(!user.name.trim().is_empty(), "api.users: name is empty");
+            anyhow::ensure!(
+                names.insert(user.name.as_str()),
+                "api.users: {:?} is listed twice",
+                user.name
+            );
+            auth::check_password_hash(&user.password_hash)
+                .with_context(|| format!("api.users: {:?}", user.name))?;
+        }
+        let mut names = std::collections::HashSet::new();
+        let mut hashes = std::collections::HashSet::new();
+        for token in &self.tokens {
+            anyhow::ensure!(!token.name.trim().is_empty(), "api.tokens: name is empty");
+            anyhow::ensure!(
+                names.insert(token.name.as_str()),
+                "api.tokens: {:?} is listed twice",
+                token.name
+            );
+            let hash = auth::parse_token_hash(&token.hash)
+                .with_context(|| format!("api.tokens: {:?}", token.name))?;
+            anyhow::ensure!(
+                hashes.insert(hash),
+                "api.tokens: {:?} has the same hash as another token",
+                token.name
+            );
+        }
+        Ok(())
     }
 }
 
@@ -526,6 +601,42 @@ mod tests {
         assert_eq!(config.upstream.servers[0].to_string(), "udp://8.8.8.8:53");
         assert_eq!(config.blocking.mode, BlockMode::NullIp);
         assert_eq!(config.cache.max_entries, 100);
+    }
+
+    #[test]
+    fn parses_accounts_and_tokens() {
+        let password_hash = auth::hash_password("pw").unwrap();
+        let (_, token_hash) = auth::new_token();
+        let text = format!(
+            r#"
+            [[api.users]]
+            name = "ana"
+            role = "admin"
+            password_hash = "{password_hash}"
+
+            [[api.users]]
+            name = "bo"
+            password_hash = "{password_hash}"
+
+            [[api.tokens]]
+            name = "home-assistant"
+            hash = "{token_hash}"
+            "#
+        );
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.api.users[0].role, Role::Admin);
+        assert_eq!(config.api.users[1].role, Role::Viewer);
+        assert_eq!(config.api.tokens[0].role, Role::Viewer);
+
+        let twice = text.replace("\"bo\"", "\"ana\"");
+        assert!(Config::parse(&twice).is_err());
+        let plain = text.replace(&password_hash, "hunter2");
+        let err = Config::parse(&plain).unwrap_err();
+        assert!(format!("{err:#}").contains("api.users: \"ana\""), "{err:#}");
+        let short = text.replace(&token_hash, "abc");
+        assert!(Config::parse(&short).is_err());
+        assert!(Config::parse("[api]\nsession_idle_secs = 0").is_err());
+        assert!(Config::parse("[api]\ntoken = \"\"").is_err());
     }
 
     #[test]

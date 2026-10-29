@@ -89,16 +89,36 @@ refresh_interval_secs = 86400
 # denylist = []
 
 [api]
-# HTTP API for stats and runtime control (see the README for endpoints).
+# HTTP API for stats and runtime control (see the docs for endpoints).
 enabled = true
-# Keep this on loopback unless you set a token. In Docker, use "0.0.0.0:8053"
-# with a token and publish the port to reach it from the host.
+# Keep this on loopback unless you set up sign-in below. In Docker, use
+# "0.0.0.0:8053" with sign-in, and publish the port to reach it from the host.
 listen = "127.0.0.1:8053"
-# When set, requests need "Authorization: Bearer <token>". (Default: unset.)
-# token = "change-me"
 # Web origins allowed to call the API from a browser, such as the address
 # you open the dashboard on. Exact matches only. (Default: none.)
 # cors_origins = ["http://localhost:8080"]
+# A session from signing in ends after this long without a request (default:
+# 8 hours), and after session_max_secs in any case (default: 7 days).
+# session_idle_secs = 28800
+# session_max_secs = 604800
+# A single admin token, sent as "Authorization: Bearer <token>". API tokens
+# below can be read-only and are stored hashed. (Default: unset.)
+# token = "change-me"
+
+# Accounts for signing in to the dashboard. Make a password hash with
+# `hushdns hash-password`. A viewer can look; an admin can also change
+# settings. (Default: none.)
+# [[api.users]]
+# name = "admin"
+# role = "admin"
+# password_hash = "$argon2id$v=19$m=19456,t=2,p=1$..."
+
+# API tokens for scripts, made with `hushdns new-token <name> --role viewer`,
+# which prints the token and this entry. (Default: none.)
+# [[api.tokens]]
+# name = "home-assistant"
+# role = "viewer"
+# hash = "<64 hex digits>"
 
 [stats]
 # Count queries per domain for the "top domains" lists. In memory only, never
